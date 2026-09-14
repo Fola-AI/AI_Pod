@@ -1,0 +1,239 @@
+// Model registry — the single source of truth for available models.
+//
+// MODEL IDs AND PRICES CHANGE FREQUENTLY. This file is expected to be edited by
+// hand (PRD §6, D5). Adding a model requires NO code changes beyond this file —
+// as long as an adapter exists for its provider (see lib/providers/index.ts).
+//
+// Seed data accurate as of 8 September 2026 — verify before first run.
+
+import type { ModelEntry, ProviderId } from '@/lib/types';
+
+// Which env var holds each provider's API key. Used to compute availability.
+export const PROVIDER_ENV_KEY: Record<ProviderId, string> = {
+  anthropic: 'ANTHROPIC_API_KEY',
+  openai: 'OPENAI_API_KEY',
+  google: 'GOOGLE_AI_API_KEY',
+  xai: 'XAI_API_KEY',
+  deepseek: 'DEEPSEEK_API_KEY',
+  meta: 'META_API_KEY',
+  mistral: 'MISTRAL_API_KEY',
+  alibaba: 'ALIBABA_API_KEY',
+};
+
+export const PROVIDER_LABEL: Record<ProviderId, string> = {
+  anthropic: 'Anthropic',
+  openai: 'OpenAI',
+  google: 'Google',
+  xai: 'xAI',
+  deepseek: 'DeepSeek',
+  meta: 'Meta',
+  mistral: 'Mistral',
+  alibaba: 'Alibaba',
+};
+
+export const MODELS: ModelEntry[] = [
+  // --- Anthropic ---
+  {
+    id: 'claude-fable-5-1',
+    provider: 'anthropic',
+    apiModelString: 'claude-fable-5-1',
+    displayName: 'Claude Fable 5.1',
+    tier: 'frontier',
+    contextWindow: 1_000_000,
+    inputPricePerMTok: 10.0,
+    outputPricePerMTok: 50.0,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+  {
+    id: 'claude-opus-5',
+    provider: 'anthropic',
+    apiModelString: 'claude-opus-5',
+    displayName: 'Claude Opus 5',
+    tier: 'frontier',
+    contextWindow: 1_000_000,
+    inputPricePerMTok: 5.0,
+    outputPricePerMTok: 25.0,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+  {
+    id: 'claude-sonnet-5',
+    provider: 'anthropic',
+    apiModelString: 'claude-sonnet-5',
+    displayName: 'Claude Sonnet 5',
+    tier: 'mid',
+    contextWindow: 1_000_000,
+    inputPricePerMTok: 3.0,
+    outputPricePerMTok: 15.0,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+  {
+    id: 'claude-haiku-4-5',
+    provider: 'anthropic',
+    apiModelString: 'claude-haiku-4-5-20251001',
+    displayName: 'Claude Haiku 4.5',
+    tier: 'fast',
+    contextWindow: 200_000,
+    inputPricePerMTok: 1.0,
+    outputPricePerMTok: 5.0,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+  // --- OpenAI ---
+  {
+    id: 'gpt-6-astra',
+    provider: 'openai',
+    apiModelString: 'gpt-6-astra',
+    displayName: 'GPT-6 Astra',
+    tier: 'frontier',
+    contextWindow: 1_050_000,
+    inputPricePerMTok: 10.0,
+    outputPricePerMTok: 50.0,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+  {
+    id: 'gpt-5-6-sol',
+    provider: 'openai',
+    apiModelString: 'gpt-5.6-sol',
+    displayName: 'GPT-5.6 Sol',
+    tier: 'frontier',
+    contextWindow: 1_050_000,
+    inputPricePerMTok: 4.0,
+    outputPricePerMTok: 20.0,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+  {
+    id: 'gpt-5-6-terra',
+    provider: 'openai',
+    apiModelString: 'gpt-5.6-terra',
+    displayName: 'GPT-5.6 Terra',
+    tier: 'mid',
+    contextWindow: 1_050_000,
+    inputPricePerMTok: 2.0,
+    outputPricePerMTok: 12.0,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+  {
+    id: 'gpt-5-6-luna',
+    provider: 'openai',
+    apiModelString: 'gpt-5.6-luna',
+    displayName: 'GPT-5.6 Luna',
+    tier: 'fast',
+    contextWindow: 1_050_000,
+    inputPricePerMTok: 0.2,
+    outputPricePerMTok: 1.2,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+  // --- Google ---
+  {
+    id: 'gemini-3-8-flash',
+    provider: 'google',
+    apiModelString: 'gemini-3.8-flash',
+    displayName: 'Gemini 3.8 Flash',
+    tier: 'frontier',
+    contextWindow: 1_050_000,
+    inputPricePerMTok: 0.75,
+    outputPricePerMTok: 3.75,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+  {
+    id: 'gemini-3-1-pro-preview',
+    provider: 'google',
+    apiModelString: 'gemini-3.1-pro-preview',
+    displayName: 'Gemini 3.1 Pro (Preview)',
+    tier: 'frontier',
+    contextWindow: 1_000_000,
+    inputPricePerMTok: null,
+    outputPricePerMTok: null,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+  // --- xAI (adapter arrives Phase 2) ---
+  {
+    id: 'grok-4-6',
+    provider: 'xai',
+    apiModelString: 'grok-4.6',
+    displayName: 'Grok 4.6',
+    tier: 'frontier',
+    contextWindow: 500_000,
+    inputPricePerMTok: 2.0,
+    outputPricePerMTok: 6.0,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+  {
+    id: 'grok-4-5',
+    provider: 'xai',
+    apiModelString: 'grok-4.5',
+    displayName: 'Grok 4.5',
+    tier: 'mid',
+    contextWindow: 256_000,
+    inputPricePerMTok: null,
+    outputPricePerMTok: null,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+  // --- DeepSeek (adapter arrives Phase 2) ---
+  {
+    id: 'deepseek-v4-pro',
+    provider: 'deepseek',
+    apiModelString: 'deepseek-v4-pro',
+    displayName: 'DeepSeek-V4-Pro',
+    tier: 'frontier',
+    contextWindow: 1_000_000,
+    inputPricePerMTok: 0.66,
+    outputPricePerMTok: 1.98,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+  // --- Meta (adapter arrives Phase 2) ---
+  {
+    id: 'muse-spark-1-3',
+    provider: 'meta',
+    apiModelString: 'muse-spark-1.3',
+    displayName: 'Muse Spark 1.3',
+    tier: 'frontier',
+    contextWindow: 1_000_000,
+    inputPricePerMTok: 1.25,
+    outputPricePerMTok: 4.25,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+  // --- Mistral (adapter arrives Phase 2) ---
+  {
+    id: 'mistral-medium-3-5',
+    provider: 'mistral',
+    apiModelString: 'mistral-medium-3-5',
+    displayName: 'Mistral Medium 3.5',
+    tier: 'mid',
+    contextWindow: 256_000,
+    inputPricePerMTok: null,
+    outputPricePerMTok: null,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+  // --- Alibaba (adapter arrives Phase 2) ---
+  {
+    id: 'qwen-3-8-max',
+    provider: 'alibaba',
+    apiModelString: 'qwen3.8-max',
+    displayName: 'Qwen3.8-Max',
+    tier: 'frontier',
+    contextWindow: 1_000_000,
+    inputPricePerMTok: 2.0,
+    outputPricePerMTok: 6.0,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+];
+
+export function getModel(modelId: string): ModelEntry | undefined {
+  return MODELS.find((m) => m.id === modelId);
+}
