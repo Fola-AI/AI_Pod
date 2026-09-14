@@ -18,6 +18,7 @@ export const PROVIDER_ENV_KEY: Record<ProviderId, string> = {
   meta: 'META_API_KEY',
   mistral: 'MISTRAL_API_KEY',
   alibaba: 'ALIBABA_API_KEY',
+  groq: 'GROQ_API_KEY',
 };
 
 export const PROVIDER_LABEL: Record<ProviderId, string> = {
@@ -29,6 +30,7 @@ export const PROVIDER_LABEL: Record<ProviderId, string> = {
   meta: 'Meta',
   mistral: 'Mistral',
   alibaba: 'Alibaba',
+  groq: 'Groq',
 };
 
 export const MODELS: ModelEntry[] = [
@@ -193,6 +195,20 @@ export const MODELS: ModelEntry[] = [
     supportsSystemPrompt: true,
     enabled: true,
   },
+  // Real, currently-callable DeepSeek models (verified live). The seed entry
+  // above uses the PRD's speculative id; these resolve against the live API.
+  {
+    id: 'deepseek-chat',
+    provider: 'deepseek',
+    apiModelString: 'deepseek-chat',
+    displayName: 'DeepSeek Chat (V3)',
+    tier: 'frontier',
+    contextWindow: 128_000,
+    inputPricePerMTok: 0.27,
+    outputPricePerMTok: 1.1,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
   // --- Meta (adapter arrives Phase 2) ---
   {
     id: 'muse-spark-1-3',
@@ -229,6 +245,43 @@ export const MODELS: ModelEntry[] = [
     contextWindow: 1_000_000,
     inputPricePerMTok: 2.0,
     outputPricePerMTok: 6.0,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+  // --- Groq (fast OpenAI-compatible inference; ids verified live 2026-09) ---
+  {
+    id: 'groq-gpt-oss-120b',
+    provider: 'groq',
+    apiModelString: 'openai/gpt-oss-120b',
+    displayName: 'GPT-OSS 120B (Groq)',
+    tier: 'frontier',
+    contextWindow: 131_072,
+    inputPricePerMTok: 0.15,
+    outputPricePerMTok: 0.75,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+  {
+    id: 'groq-qwen3-8-27b',
+    provider: 'groq',
+    apiModelString: 'qwen/qwen3.8-27b',
+    displayName: 'Qwen3.8 27B (Groq)',
+    tier: 'mid',
+    contextWindow: 131_072,
+    inputPricePerMTok: 0.2,
+    outputPricePerMTok: 0.6,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+  {
+    id: 'groq-gpt-oss-20b',
+    provider: 'groq',
+    apiModelString: 'openai/gpt-oss-20b',
+    displayName: 'GPT-OSS 20B (Groq)',
+    tier: 'fast',
+    contextWindow: 131_072,
+    inputPricePerMTok: 0.1,
+    outputPricePerMTok: 0.5,
     supportsSystemPrompt: true,
     enabled: true,
   },

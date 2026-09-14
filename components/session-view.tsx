@@ -11,7 +11,13 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import type { Session, Turn } from '@/lib/types';
-import { postTurn } from '@/lib/client';
+import {
+  postTurn,
+  regenerateTurn,
+  editTurn,
+  deleteTurn,
+} from '@/lib/client';
+import { Textarea } from '@/components/ui/textarea';
 import { formatUsd } from '@/lib/cost';
 import { FORMATS } from '@/lib/formats';
 import { getPersona } from '@/lib/personas';
@@ -93,6 +99,58 @@ export function SessionView({ initial }: { initial: Session }) {
     stopRef.current = true;
     toast.info('Wrapping up — moving to closing statements.');
   }
+
+  const [busyIndex, setBusyIndex] = useState<number | null>(null);
+
+  async function handleRegenerate(index: number) {
+    setBusyIndex(index);
+    try {
+      const res = await regenerateTurn(initial.id, index);
+      setTurns(res.turns);
+      setTotalWords(res.totalWords);
+      setTotalCostUsd(res.totalCostUsd);
+      toast.success(`Regenerated turn ${index}. Later turns marked stale.`);
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setBusyIndex(null);
+    }
+  }
+
+  async function handleEdit(index: number, text: string) {
+    try {
+      const res = await editTurn(initial.id, index, text);
+      setTurns((prev) =>
+        prev.map((t) =>
+          t.index === index ? { ...t, text, wasEdited: true } : t,
+        ),
+      );
+      setTotalWords(res.totalWords);
+      setTotalCostUsd(res.totalCostUsd);
+      toast.success(`Saved edit to turn ${index}.`);
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  }
+
+  async function handleDelete(index: number) {
+    if (!confirm(`Delete turn ${index}? Remaining turns will be renumbered.`))
+      return;
+    setBusyIndex(index);
+    try {
+      const res = await deleteTurn(initial.id, index);
+      setTurns(res.turns);
+      setTotalWords(res.totalWords);
+      setTotalCostUsd(res.totalCostUsd);
+      toast.success('Turn deleted.');
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setBusyIndex(null);
+    }
+  }
+
+  const canEdit = !running;
 
   const sessionObj: Session = {
     ...initial,
@@ -215,7 +273,15 @@ export function SessionView({ initial }: { initial: Session }) {
           </p>
         )}
         {turns.map((t) => (
-          <TurnBlock key={t.index} turn={t} />
+          <TurnBlock
+            key={t.index}
+            turn={t}
+            editable={canEdit}
+            busy={busyIndex === t.index}
+            onRegenerate={() => handleRegenerate(t.index)}
+            onDelete={() => handleDelete(t.index)}
+            onEdit={(text) => handleEdit(t.index, text)}
+          />
         ))}
         {running && <ThinkingRow />}
         <div ref={bottomRef} />
@@ -224,17 +290,37 @@ export function SessionView({ initial }: { initial: Session }) {
   );
 }
 
-function TurnBlock({ turn }: { turn: Turn }) {
+function TurnBlock({
+  turn,
+  editable,
+  busy,
+  onRegenerate,
+  onDelete,
+  onEdit,
+}: {
+  turn: Turn;
+  editable: boolean;
+  busy: boolean;
+  onRegenerate: () => void;
+  onDelete: () => void;
+  onEdit: (text: string) => void;
+}) {
   const isModerator = turn.speakerId === MODERATOR_ID;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(turn.text);
+
   return (
     <div
       className={
-        isModerator
-          ? 'border-l-2 border-muted-foreground/40 pl-4'
-          : 'border-l-2 border-primary/60 pl-4'
+        'group relative pl-4 border-l-2 ' +
+        (turn.isStale
+          ? 'border-amber-500/60'
+          : isModerator
+            ? 'border-muted-foreground/40'
+            : 'border-primary/60')
       }
     >
-      <div className="flex items-baseline gap-2">
+      <div className="flex items-baseline gap-2 flex-wrap">
         <span
           className={
             'text-xs font-semibold uppercase tracking-wide ' +
@@ -249,10 +335,76 @@ function TurnBlock({ turn }: { turn: Turn }) {
         {turn.wasEdited && (
           <span className="text-[10px] text-muted-foreground">(edited)</span>
         )}
+        {turn.isStale && (
+          <span className="text-[10px] text-amber-600 dark:text-amber-500">
+            stale — context changed
+          </span>
+        )}
+        {editable && !editing && (
+          <span className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <Button
+              variant="ghost"
+              size="xs"
+              disabled={busy}
+              onClick={onRegenerate}
+            >
+              {busy ? '…' : 'Regenerate'}
+            </Button>
+            <Button
+              variant="ghost"
+              size="xs"
+              disabled={busy}
+              onClick={() => {
+                setDraft(turn.text);
+                setEditing(true);
+              }}
+            >
+              Edit
+            </Button>
+            <Button
+              variant="ghost"
+              size="xs"
+              disabled={busy}
+              onClick={onDelete}
+              className="text-muted-foreground hover:text-destructive"
+            >
+              Delete
+            </Button>
+          </span>
+        )}
       </div>
-      <p className="mt-1 whitespace-pre-wrap leading-relaxed text-[15px]">
-        {turn.text}
-      </p>
+
+      {editing ? (
+        <div className="mt-2 space-y-2">
+          <Textarea
+            rows={5}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              onClick={() => {
+                onEdit(draft);
+                setEditing(false);
+              }}
+            >
+              Save
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setEditing(false)}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <p className="mt-1 whitespace-pre-wrap leading-relaxed text-[15px]">
+          {turn.text}
+        </p>
+      )}
     </div>
   );
 }

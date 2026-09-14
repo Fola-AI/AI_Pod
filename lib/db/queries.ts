@@ -1,6 +1,6 @@
 // Data-access helpers. All session/turn reads and writes go through here.
 
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, gt } from 'drizzle-orm';
 import { db } from './index';
 import { sessions, turns } from './schema';
 import type { SessionRow, TurnRow } from './schema';
@@ -10,6 +10,7 @@ import type {
   SessionStatus,
   Turn,
 } from '@/lib/types';
+import { countWords } from '@/lib/cost';
 
 function rowToTurn(r: TurnRow): Turn {
   return {
@@ -163,7 +164,7 @@ export async function setSessionStatus(
   await db.update(sessions).set({ status }).where(eq(sessions.id, id));
 }
 
-/** Edit a single turn's text (Phase 2 inline edit; used by the API). */
+/** Inline hand-edit of a single turn's text. */
 export async function updateTurnText(
   sessionId: string,
   index: number,
@@ -173,4 +174,72 @@ export async function updateTurnText(
     .update(turns)
     .set({ text, wasEdited: true })
     .where(and(eq(turns.sessionId, sessionId), eq(turns.index, index)));
+}
+
+/** Replace a turn's generated content after a regenerate. */
+export async function replaceTurn(
+  sessionId: string,
+  index: number,
+  fields: {
+    text: string;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
+    latencyMs: number;
+  },
+): Promise<void> {
+  await db
+    .update(turns)
+    .set({ ...fields, wasEdited: false, isStale: false })
+    .where(and(eq(turns.sessionId, sessionId), eq(turns.index, index)));
+}
+
+/** Mark every turn after `index` as stale (its context changed). */
+export async function markTurnsStaleAfter(
+  sessionId: string,
+  index: number,
+): Promise<void> {
+  await db
+    .update(turns)
+    .set({ isStale: true })
+    .where(and(eq(turns.sessionId, sessionId), gt(turns.index, index)));
+}
+
+/** Delete a turn and renumber the ones after it (indices are contiguous). */
+export async function deleteTurnAndRenumber(
+  sessionId: string,
+  index: number,
+): Promise<void> {
+  await db
+    .delete(turns)
+    .where(and(eq(turns.sessionId, sessionId), eq(turns.index, index)));
+  const rest = await db
+    .select()
+    .from(turns)
+    .where(and(eq(turns.sessionId, sessionId), gt(turns.index, index)))
+    .orderBy(asc(turns.index));
+  for (const r of rest) {
+    const newIndex = r.index - 1;
+    await db
+      .update(turns)
+      .set({ index: newIndex, id: `${sessionId}:${newIndex}` })
+      .where(eq(turns.id, r.id));
+  }
+}
+
+/** Recompute and persist word/cost totals from the current turns. */
+export async function recomputeAggregates(
+  sessionId: string,
+): Promise<{ totalWords: number; totalCostUsd: number }> {
+  const ts = await db
+    .select()
+    .from(turns)
+    .where(eq(turns.sessionId, sessionId));
+  const totalWords = ts.reduce((s, t) => s + countWords(t.text), 0);
+  const totalCostUsd = ts.reduce((s, t) => s + t.costUsd, 0);
+  await db
+    .update(sessions)
+    .set({ totalWords, totalCostUsd })
+    .where(eq(sessions.id, sessionId));
+  return { totalWords, totalCostUsd };
 }

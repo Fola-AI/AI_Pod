@@ -9,7 +9,8 @@ export type ProviderId =
   | 'deepseek'
   | 'meta'
   | 'mistral'
-  | 'alibaba';
+  | 'alibaba'
+  | 'groq';
 
 export type SessionFormat =
   | 'debate'

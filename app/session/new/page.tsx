@@ -78,6 +78,9 @@ export default function NewSessionPage() {
     makeAgent(1),
     makeAgent(2),
   ]);
+  const [sources, setSources] = useState<
+    { id: string; title: string; content: string }[]
+  >([]);
   const [modName, setModName] = useState('Moderator');
   const [modModelId, setModModelId] = useState(FRONTIER_DEFAULT);
   const [interjectionFrequency, setInterjectionFrequency] = useState<
@@ -94,6 +97,36 @@ export default function NewSessionPage() {
       .then((r) => setAvailable(r.available))
       .catch(() => setAvailable(null));
   }, []);
+
+  function addSource() {
+    if (sources.length >= 5) return toast.error('Up to 5 documents.');
+    setSources((p) => [
+      ...p,
+      { id: crypto.randomUUID(), title: `Source ${p.length + 1}`, content: '' },
+    ]);
+  }
+  function updateSource(id: string, patch: Partial<{ title: string; content: string }>) {
+    setSources((p) => p.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+  }
+  function removeSource(id: string) {
+    setSources((p) => p.filter((s) => s.id !== id));
+  }
+  async function onUploadFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    for (const file of files) {
+      if (sources.length >= 5) break;
+      const text = await file.text();
+      setSources((p) => [
+        ...p,
+        {
+          id: crypto.randomUUID(),
+          title: file.name.replace(/\.[^.]+$/, ''),
+          content: text,
+        },
+      ]);
+    }
+    e.target.value = '';
+  }
 
   const stanceRequired = isStanceBearing(format);
   const formatMeta = FORMATS[format];
@@ -114,6 +147,19 @@ export default function NewSessionPage() {
     setAgents((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a)));
   }
 
+  // Shuffle personas across agents, keeping names and models fixed (PRD §4.2).
+  function shufflePersonas() {
+    setAgents((prev) => {
+      const personas = prev.map((a) => a.personaId);
+      for (let i = personas.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [personas[i], personas[j]] = [personas[j], personas[i]];
+      }
+      return prev.map((a, i) => ({ ...a, personaId: personas[i] }));
+    });
+    toast.success('Personas shuffled — names and models kept');
+  }
+
   async function submit() {
     if (!title.trim()) return toast.error('Add a title.');
     if (!topic.trim()) return toast.error('Add a topic.');
@@ -128,6 +174,15 @@ export default function NewSessionPage() {
         topic: topic.trim(),
         format,
         domain: domain.trim() || 'general',
+        sourceMaterial: sources.filter((s) => s.content.trim()).length
+          ? sources
+              .filter((s) => s.content.trim())
+              .map((s) => ({
+                id: s.id,
+                title: s.title.trim() || 'Source',
+                content: s.content.trim(),
+              }))
+          : undefined,
         agentCount: agents.length,
         agents: agents.map((a) => ({
           id: a.id,
@@ -239,6 +294,14 @@ export default function NewSessionPage() {
             </CardDescription>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={shufflePersonas}
+            >
+              Shuffle personas
+            </Button>
             <Button
               type="button"
               variant="outline"
@@ -372,6 +435,95 @@ export default function NewSessionPage() {
             </div>
           ))}
         </CardContent>
+      </Card>
+
+      {/* Source material */}
+      <Card>
+        <CardHeader className="flex-row items-center justify-between space-y-0">
+          <div>
+            <CardTitle>Source material</CardTitle>
+            <CardDescription>
+              Optional. Injected into every participant; the moderator challenges
+              claims that contradict it. The highest-leverage lever for quality.
+            </CardDescription>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              render={<label htmlFor="src-upload" />}
+            >
+              Upload .txt/.md
+            </Button>
+            <input
+              id="src-upload"
+              type="file"
+              accept=".txt,.md,text/plain,text/markdown"
+              multiple
+              hidden
+              onChange={onUploadFile}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={addSource}
+              disabled={sources.length >= 5}
+            >
+              Paste text
+            </Button>
+          </div>
+        </CardHeader>
+        {sources.length > 0 && (
+          <CardContent className="space-y-3">
+            {sources.map((s) => {
+              const words = s.content.trim()
+                ? s.content.trim().split(/\s+/).length
+                : 0;
+              return (
+                <div key={s.id} className="rounded-lg border p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Input
+                      className="h-7"
+                      value={s.title}
+                      onChange={(e) =>
+                        updateSource(s.id, { title: e.target.value })
+                      }
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeSource(s.id)}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                  <Textarea
+                    rows={4}
+                    placeholder="Paste research, an article, notes…"
+                    value={s.content}
+                    onChange={(e) =>
+                      updateSource(s.id, { content: e.target.value })
+                    }
+                  />
+                  <p
+                    className={
+                      'text-xs ' +
+                      (words > 4000
+                        ? 'text-destructive'
+                        : 'text-muted-foreground')
+                    }
+                  >
+                    {words.toLocaleString()} words
+                    {words > 4000 && ' — over the 4,000-word guideline'}
+                  </p>
+                </div>
+              );
+            })}
+          </CardContent>
+        )}
       </Card>
 
       {/* Moderator */}

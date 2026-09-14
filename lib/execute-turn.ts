@@ -40,8 +40,9 @@ export async function executeTurn(
     plan.instructionOpts,
   );
 
-  // Give the model a little headroom over the word budget (words -> tokens).
-  const maxTokens = Math.max(256, Math.ceil(plan.maxWords * 2.2));
+  // Cap output near the word budget. ~1.5 tokens/word + slight headroom keeps
+  // turns from sprawling well past maxWordsPerTurn (PRD acceptance §7).
+  const maxTokens = Math.max(90, Math.ceil(plan.maxWords * 1.7));
 
   const result = await withRetry(() =>
     adapter.generate({

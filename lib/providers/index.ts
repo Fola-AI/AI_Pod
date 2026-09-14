@@ -12,17 +12,35 @@ import { createOpenAICompatibleAdapter } from './base-openai';
 
 type AdapterFactory = (apiKey: string) => ProviderAdapter;
 
-// Providers with a working adapter. Phase 1: anthropic, openai, google.
-// Phase 2 adds xai, deepseek, mistral, alibaba (OpenAI-compatible) and meta.
+// OpenAI-compatible providers: base URL is the only real difference.
+const OPENAI_COMPATIBLE_BASE_URLS: Partial<Record<ProviderId, string>> = {
+  openai: 'https://api.openai.com/v1',
+  xai: 'https://api.x.ai/v1',
+  deepseek: 'https://api.deepseek.com',
+  mistral: 'https://api.mistral.ai/v1',
+  alibaba: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+  groq: 'https://api.groq.com/openai/v1',
+  // Meta's Llama API exposes an OpenAI-compatible endpoint.
+  meta: 'https://api.llama.com/compat/v1',
+};
+
+function openAICompatFactory(id: ProviderId): AdapterFactory {
+  const baseUrl = OPENAI_COMPATIBLE_BASE_URLS[id]!;
+  return (key) => createOpenAICompatibleAdapter({ id, baseUrl, apiKey: key });
+}
+
+// Every provider now has a working adapter. Anthropic and Google are bespoke;
+// the rest share the OpenAI-compatible base.
 const ADAPTER_FACTORIES: Partial<Record<ProviderId, AdapterFactory>> = {
   anthropic: (key) => createAnthropicAdapter(key),
-  openai: (key) =>
-    createOpenAICompatibleAdapter({
-      id: 'openai',
-      baseUrl: 'https://api.openai.com/v1',
-      apiKey: key,
-    }),
   google: (key) => createGoogleAdapter(key),
+  openai: openAICompatFactory('openai'),
+  xai: openAICompatFactory('xai'),
+  deepseek: openAICompatFactory('deepseek'),
+  mistral: openAICompatFactory('mistral'),
+  alibaba: openAICompatFactory('alibaba'),
+  groq: openAICompatFactory('groq'),
+  meta: openAICompatFactory('meta'),
 };
 
 export function isProviderImplemented(provider: ProviderId): boolean {

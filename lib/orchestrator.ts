@@ -53,7 +53,19 @@ function shouldBeginClosings(
   const words = accumulatedWords(turns);
   const roundComplete =
     standardCount > 0 && standardCount % config.agentCount === 0;
-  return words >= config.targetWordCount && roundComplete;
+
+  // Reserve room for the closing round (N agent closings + moderator bookends)
+  // so the *total* transcript lands near targetWordCount, not target + closings.
+  const avgMaxWords =
+    config.agents.reduce((s, a) => s + a.maxWordsPerTurn, 0) /
+    config.agentCount;
+  const reservedForClosings = config.agentCount * avgMaxWords + 90;
+  const roundTarget = Math.max(
+    config.targetWordCount * 0.55,
+    config.targetWordCount - reservedForClosings,
+  );
+
+  return words >= roundTarget && roundComplete;
 }
 
 /** Plan a turn inside the round loop (agents rotate, moderator interjects). */
@@ -185,4 +197,48 @@ export function planNextTurn(
 /** For the live view: has the session reached its natural end? */
 export function isSessionComplete(config: SessionConfig, turns: Turn[]): boolean {
   return planNextTurn(config, turns, {}) === null;
+}
+
+/** Reconstruct the plan for an already-produced turn, for regeneration. */
+export function planFromStoredTurn(
+  config: SessionConfig,
+  turn: Turn,
+): TurnPlan {
+  if (turn.speakerId === MODERATOR_ID) {
+    const instructionOpts: TurnInstructionOpts =
+      turn.turnType === 'moderator-opening'
+        ? { moderatorOpening: true }
+        : turn.turnType === 'call-closings'
+          ? { moderatorCallClosings: true }
+          : turn.turnType === 'moderator-closing'
+            ? { moderatorClosing: true }
+            : {};
+    return {
+      speakerId: MODERATOR_ID,
+      speakerDisplayName: config.moderator.displayName || 'Moderator',
+      turnType: turn.turnType,
+      modelId: config.moderator.modelId,
+      temperature: config.moderator.temperature,
+      maxWords: 60,
+      instructionOpts,
+    };
+  }
+
+  const agent =
+    config.agents.find((a) => a.id === turn.speakerId) ?? config.agents[0];
+  return {
+    speakerId: agent.id,
+    speakerDisplayName: agent.displayName,
+    turnType: turn.turnType,
+    modelId: agent.modelId,
+    personaId: agent.personaId,
+    temperature: agent.temperature,
+    maxWords: agent.maxWordsPerTurn,
+    agent,
+    instructionOpts: {},
+    holdsSeat:
+      config.format === 'hot-seat'
+        ? agent.id === config.agents[0].id
+        : undefined,
+  };
 }

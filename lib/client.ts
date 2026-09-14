@@ -70,3 +70,43 @@ export async function postTurn(
   });
   return jsonOrThrow(res);
 }
+
+export interface TurnMutationResponse {
+  turns: Turn[];
+  totalWords: number;
+  totalCostUsd: number;
+}
+
+export async function regenerateTurn(
+  sessionId: string,
+  index: number,
+): Promise<TurnMutationResponse> {
+  const res = await fetch(
+    `/api/sessions/${sessionId}/turns/${index}/regenerate`,
+    { method: 'POST' },
+  );
+  return jsonOrThrow(res);
+}
+
+export async function editTurn(
+  sessionId: string,
+  index: number,
+  text: string,
+): Promise<{ totalWords: number; totalCostUsd: number }> {
+  const res = await fetch(`/api/sessions/${sessionId}/turns/${index}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  return jsonOrThrow(res);
+}
+
+export async function deleteTurn(
+  sessionId: string,
+  index: number,
+): Promise<TurnMutationResponse> {
+  const res = await fetch(`/api/sessions/${sessionId}/turns/${index}`, {
+    method: 'DELETE',
+  });
+  return jsonOrThrow(res);
+}
