@@ -16,24 +16,35 @@ export function createAnthropicAdapter(apiKey: string): ProviderAdapter {
   return {
     id: 'anthropic',
     async generate(params: GenerateParams): Promise<GenerateResult> {
+      const headers = {
+        'x-api-key': apiKey,
+        'anthropic-version': API_VERSION,
+      };
+      const baseBody = {
+        model: params.apiModelString,
+        system: params.systemPrompt || undefined,
+        messages: params.messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+        })),
+        max_tokens: params.maxTokens,
+      };
+
       const start = Date.now();
-      const { ok, status, json, text } = await postJson(
+      let res = await postJson(
         API_URL,
-        {
-          model: params.apiModelString,
-          system: params.systemPrompt || undefined,
-          messages: params.messages.map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
-          max_tokens: params.maxTokens,
-          temperature: params.temperature,
-        },
-        {
-          'x-api-key': apiKey,
-          'anthropic-version': API_VERSION,
-        },
+        { ...baseBody, temperature: params.temperature },
+        headers,
       );
+      // Some newer models deprecate `temperature`; retry without it.
+      if (
+        !res.ok &&
+        res.status === 400 &&
+        /temperature/i.test(res.json?.error?.message ?? res.text ?? '')
+      ) {
+        res = await postJson(API_URL, baseBody, headers);
+      }
+      const { ok, status, json, text } = res;
       const latencyMs = Date.now() - start;
 
       if (!ok) {

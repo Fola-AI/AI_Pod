@@ -53,17 +53,29 @@ export function createOpenAICompatibleAdapter(
         }
       }
 
+      const url = `${cfg.baseUrl}/chat/completions`;
+      const headers = { Authorization: `Bearer ${cfg.apiKey}` };
+      const baseBody = {
+        model: params.apiModelString,
+        messages,
+        max_tokens: params.maxTokens,
+      };
+
       const start = Date.now();
-      const { ok, status, json, text } = await postJson(
-        `${cfg.baseUrl}/chat/completions`,
-        {
-          model: params.apiModelString,
-          messages,
-          temperature: params.temperature,
-          max_tokens: params.maxTokens,
-        },
-        { Authorization: `Bearer ${cfg.apiKey}` },
+      let res = await postJson(
+        url,
+        { ...baseBody, temperature: params.temperature },
+        headers,
       );
+      // Some models only accept the default temperature; retry without it.
+      if (
+        !res.ok &&
+        res.status === 400 &&
+        /temperature/i.test(res.json?.error?.message ?? res.text ?? '')
+      ) {
+        res = await postJson(url, baseBody, headers);
+      }
+      const { ok, status, json, text } = res;
       const latencyMs = Date.now() - start;
 
       if (!ok) {
