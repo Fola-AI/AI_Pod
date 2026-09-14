@@ -110,3 +110,17 @@ export async function deleteTurn(
   });
   return jsonOrThrow(res);
 }
+
+export interface Claim {
+  type: 'statistic' | 'date' | 'study' | 'quote' | 'other';
+  claim: string;
+  speaker?: string;
+}
+
+export async function extractClaims(sessionId: string): Promise<Claim[]> {
+  const res = await fetch(`/api/sessions/${sessionId}/claims`, {
+    method: 'POST',
+  });
+  const data = await jsonOrThrow(res);
+  return data.claims;
+}

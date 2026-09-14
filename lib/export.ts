@@ -69,9 +69,10 @@ export function toSpeakerManifest(session: Session): string {
     ...config.agents.map((a) => {
       const persona = getPersona(a.personaId);
       const model = getModel(a.modelId);
-      return `${a.displayName.padEnd(10)}${(persona?.name ?? '').padEnd(20)}${
+      const base = `${a.displayName.padEnd(10)}${(persona?.name ?? '').padEnd(20)}${(
         model?.displayName ?? a.modelId
-      }`;
+      ).padEnd(24)}`;
+      return a.referenceImage ? `${base}${a.referenceImage}` : base.trimEnd();
     }),
     `${(config.moderator.displayName || 'Moderator').padEnd(10)}${'—'.padEnd(20)}${
       getModel(config.moderator.modelId)?.displayName ??

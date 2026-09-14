@@ -17,6 +17,7 @@ const agentSchema = z.object({
   stance: z.string().optional(),
   temperature: z.number().min(0).max(2).default(0.85),
   maxWordsPerTurn: z.number().int().min(40).max(600).default(160),
+  referenceImage: z.string().optional(),
 });
 
 const moderatorSchema = z.object({
@@ -51,6 +52,7 @@ export const createSessionSchema = z
     moderator: moderatorSchema,
     targetWordCount: z.number().int().min(300).max(20000).default(2600),
     maxTurns: z.number().int().min(4).max(MAX_TURNS_CAP).default(24),
+    budgetCapUsd: z.number().positive().optional(),
   })
   .refine((d) => d.agents.length === d.agentCount, {
     message: 'agents length must equal agentCount',
@@ -87,6 +89,7 @@ export function toSessionConfig(input: CreateSessionInput): SessionConfig {
     moderator: input.moderator,
     targetWordCount: input.targetWordCount,
     maxTurns: input.maxTurns,
+    budgetCapUsd: input.budgetCapUsd,
     createdAt: new Date().toISOString(),
   };
 }

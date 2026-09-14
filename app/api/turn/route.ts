@@ -35,7 +35,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Session not found' }, { status: 404 });
   }
 
-  const plan = planNextTurn(session.config, session.turns, { stopRequested });
+  // Budget cap: once actual spend exceeds it, jump straight to closings.
+  const budgetExceeded =
+    typeof session.config.budgetCapUsd === 'number' &&
+    session.totalCostUsd >= session.config.budgetCapUsd;
+
+  const plan = planNextTurn(session.config, session.turns, {
+    stopRequested: stopRequested || budgetExceeded,
+  });
 
   // Nothing left to do — the session is already complete.
   if (!plan) {

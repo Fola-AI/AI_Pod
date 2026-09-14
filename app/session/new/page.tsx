@@ -28,8 +28,10 @@ import { Separator } from '@/components/ui/separator';
 import { MODELS, PROVIDER_LABEL } from '@/config/models';
 import { BUILT_IN_PERSONAS } from '@/lib/personas';
 import { FORMAT_LIST, FORMATS, isStanceBearing } from '@/lib/formats';
-import type { ProviderId, SessionFormat } from '@/lib/types';
+import type { ProviderId, SessionFormat, SessionConfig } from '@/lib/types';
 import { createSession, fetchProviders } from '@/lib/client';
+import { estimateSessionCost, formatUsd } from '@/lib/cost';
+import { PRESETS } from '@/lib/presets';
 
 interface AgentDraft {
   id: string;
@@ -39,6 +41,7 @@ interface AgentDraft {
   stance: string;
   temperature: number;
   maxWordsPerTurn: number;
+  referenceImage: string;
 }
 
 const NAME_POOL = ['Lara', 'Tony', 'Kimi', 'Ada', 'Zoe', 'Ravi'];
@@ -61,6 +64,7 @@ function makeAgent(i: number): AgentDraft {
     stance: '',
     temperature: 0.85,
     maxWordsPerTurn: 160,
+    referenceImage: '',
   };
 }
 
@@ -73,6 +77,7 @@ export default function NewSessionPage() {
   const [domain, setDomain] = useState('general');
   const [targetWordCount, setTargetWordCount] = useState(2600);
   const [maxTurns, setMaxTurns] = useState(24);
+  const [budgetCap, setBudgetCap] = useState('');
   const [agents, setAgents] = useState<AgentDraft[]>([
     makeAgent(0),
     makeAgent(1),
@@ -133,6 +138,50 @@ export default function NewSessionPage() {
 
   const topicWarning = useMemo(() => detectSensitiveTopic(topic), [topic]);
 
+  const estimatedCost = useMemo(() => {
+    const cfg: SessionConfig = {
+      id: 'estimate',
+      title,
+      topic,
+      format,
+      domain,
+      sourceMaterial: sources
+        .filter((s) => s.content.trim())
+        .map((s) => ({ id: s.id, title: s.title, content: s.content })),
+      agentCount: agents.length,
+      agents: agents.map((a) => ({
+        id: a.id,
+        displayName: a.displayName,
+        personaId: a.personaId,
+        modelId: a.modelId,
+        temperature: a.temperature,
+        maxWordsPerTurn: a.maxWordsPerTurn,
+      })),
+      moderator: {
+        displayName: modName,
+        modelId: modModelId,
+        interjectionFrequency,
+        temperature: 0.7,
+      },
+      targetWordCount,
+      maxTurns,
+      createdAt: '',
+    };
+    return estimateSessionCost(cfg);
+  }, [
+    agents,
+    sources,
+    modModelId,
+    interjectionFrequency,
+    targetWordCount,
+    maxTurns,
+    format,
+    domain,
+    title,
+    topic,
+    modName,
+  ]);
+
   function setAgentCount(n: number) {
     setAgents((prev) => {
       if (n === prev.length) return prev;
@@ -158,6 +207,23 @@ export default function NewSessionPage() {
       return prev.map((a, i) => ({ ...a, personaId: personas[i] }));
     });
     toast.success('Personas shuffled — names and models kept');
+  }
+
+  function applyPreset(presetId: string) {
+    const preset = PRESETS.find((p) => p.id === presetId);
+    if (!preset) return;
+    setFormat(preset.format);
+    setTargetWordCount(preset.targetWordCount);
+    setInterjectionFrequency(preset.interjectionFrequency);
+    setAgents(
+      preset.agents.map((pa, i) => ({
+        ...makeAgent(i),
+        displayName: pa.displayName,
+        personaId: pa.personaId,
+        stance: pa.stance ?? '',
+      })),
+    );
+    toast.success(`Applied preset: ${preset.label}`);
   }
 
   async function submit() {
@@ -192,6 +258,7 @@ export default function NewSessionPage() {
           stance: a.stance.trim() || undefined,
           temperature: a.temperature,
           maxWordsPerTurn: a.maxWordsPerTurn,
+          referenceImage: a.referenceImage.trim() || undefined,
         })),
         moderator: {
           displayName: modName.trim() || 'Moderator',
@@ -201,6 +268,7 @@ export default function NewSessionPage() {
         },
         targetWordCount,
         maxTurns,
+        budgetCapUsd: budgetCap.trim() ? Number(budgetCap) : undefined,
       });
       toast.success('Session created');
       router.push(`/session/${session.id}`);
@@ -212,11 +280,35 @@ export default function NewSessionPage() {
 
   return (
     <div className="space-y-6 max-w-3xl">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">New session</h1>
-        <p className="text-sm text-muted-foreground">
-          Configure the topic, the participants, and the moderator, then run it.
-        </p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">New session</h1>
+          <p className="text-sm text-muted-foreground">
+            Configure the topic, the participants, and the moderator, then run it.
+          </p>
+        </div>
+        <div className="w-56">
+          <Label className="text-xs">Start from a preset</Label>
+          <Select
+            value={''}
+            onValueChange={(v) => v && applyPreset(v)}
+          >
+            <SelectTrigger>
+              <SelectValue>
+                {(v) =>
+                  PRESETS.find((p) => p.id === v)?.label ?? 'Choose a preset…'
+                }
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {PRESETS.map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {p.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {/* Topic & format */}
@@ -427,6 +519,18 @@ export default function NewSessionPage() {
                       }
                     />
                   </div>
+                  <div className="space-y-1.5 col-span-2">
+                    <Label className="text-xs">
+                      Reference image (filename or URL — for the manifest)
+                    </Label>
+                    <Input
+                      placeholder="lara-face.png or https://…"
+                      value={a.referenceImage}
+                      onChange={(e) =>
+                        updateAgent(a.id, { referenceImage: e.target.value })
+                      }
+                    />
+                  </div>
                 </div>
               </details>
               <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -609,6 +713,28 @@ export default function NewSessionPage() {
               value={maxTurns}
               onChange={(e) => setMaxTurns(Number(e.target.value))}
             />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Budget cap (USD, optional)</Label>
+            <Input
+              type="number"
+              min={0}
+              step="0.5"
+              placeholder="e.g. 1.00 — jumps to closings if exceeded"
+              value={budgetCap}
+              onChange={(e) => setBudgetCap(e.target.value)}
+            />
+          </div>
+          <div className="flex items-end">
+            <div className="rounded-lg border bg-muted/40 px-3 py-2 w-full">
+              <p className="text-xs text-muted-foreground">Estimated cost</p>
+              <p className="text-lg font-semibold">
+                ~{formatUsd(estimatedCost)}
+              </p>
+              <p className="text-[10px] text-muted-foreground">
+                Indicative — actual depends on models and length.
+              </p>
+            </div>
           </div>
         </CardContent>
       </Card>

@@ -52,6 +52,7 @@ export interface AgentConfig {
   stance?: string; // Debate / hot-seat only
   temperature: number; // Default 0.85
   maxWordsPerTurn: number; // Default 160
+  referenceImage?: string; // Optional filename/URL, carried to the manifest
 }
 
 export type InterjectionFrequency = 'low' | 'medium' | 'high';
@@ -81,6 +82,7 @@ export interface SessionConfig {
   moderator: ModeratorConfig;
   targetWordCount: number; // Default 2600
   maxTurns: number; // Default 24, hard cap 40
+  budgetCapUsd?: number; // Optional. Jump to closings once actual cost exceeds it
   createdAt: string;
 }
 

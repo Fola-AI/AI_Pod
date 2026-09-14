@@ -16,6 +16,8 @@ import {
   regenerateTurn,
   editTurn,
   deleteTurn,
+  extractClaims,
+  type Claim,
 } from '@/lib/client';
 import { Textarea } from '@/components/ui/textarea';
 import { formatUsd } from '@/lib/cost';
@@ -152,6 +154,47 @@ export function SessionView({ initial }: { initial: Session }) {
 
   const canEdit = !running;
 
+  const [claims, setClaims] = useState<Claim[] | null>(null);
+  const [claimsLoading, setClaimsLoading] = useState(false);
+  const [checked, setChecked] = useState<Record<number, boolean>>({});
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(`claims-checked-${initial.id}`);
+      if (raw) setChecked(JSON.parse(raw));
+    } catch {
+      /* ignore */
+    }
+  }, [initial.id]);
+
+  function toggleClaim(i: number) {
+    setChecked((prev) => {
+      const next = { ...prev, [i]: !prev[i] };
+      try {
+        localStorage.setItem(
+          `claims-checked-${initial.id}`,
+          JSON.stringify(next),
+        );
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }
+
+  async function handleExtractClaims() {
+    setClaimsLoading(true);
+    try {
+      const c = await extractClaims(initial.id);
+      setClaims(c);
+      if (c.length === 0) toast.info('No checkable claims found.');
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setClaimsLoading(false);
+    }
+  }
+
   const sessionObj: Session = {
     ...initial,
     turns,
@@ -247,6 +290,15 @@ export function SessionView({ initial }: { initial: Session }) {
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => {
+                  const a = document.createElement('a');
+                  a.href = `/api/sessions/${initial.id}/export/pdf`;
+                  a.click();
+                }}
+              >
+                PDF
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
                   navigator.clipboard.writeText(toSpeakerManifest(sessionObj));
                   toast.success('Speaker manifest copied');
                 }}
@@ -286,6 +338,61 @@ export function SessionView({ initial }: { initial: Session }) {
         {running && <ThinkingRow />}
         <div ref={bottomRef} />
       </div>
+
+      {/* Claims checklist */}
+      {complete && (
+        <div className="rounded-lg border p-4 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="font-medium">Claims checklist</h2>
+              <p className="text-xs text-muted-foreground">
+                Extracts every statistic, date, named study, and quotation so you
+                can verify before publishing.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExtractClaims}
+              disabled={claimsLoading}
+            >
+              {claimsLoading
+                ? 'Extracting…'
+                : claims
+                  ? 'Re-extract'
+                  : 'Extract claims'}
+            </Button>
+          </div>
+          {claims && claims.length > 0 && (
+            <ul className="space-y-2">
+              {claims.map((c, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={!!checked[i]}
+                    onChange={() => toggleClaim(i)}
+                  />
+                  <span className={checked[i] ? 'line-through text-muted-foreground' : ''}>
+                    <Badge variant="outline" className="mr-2 text-[10px]">
+                      {c.type}
+                    </Badge>
+                    {c.claim}
+                    {c.speaker && (
+                      <span className="text-muted-foreground"> — {c.speaker}</span>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {claims && claims.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              No checkable claims found.
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
