@@ -50,6 +50,7 @@ export const turns = pgTable(
     latencyMs: integer('latency_ms').notNull().default(0),
     wasEdited: boolean('was_edited').notNull().default(false),
     isStale: boolean('is_stale').notNull().default(false),
+    wasTruncated: boolean('was_truncated').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

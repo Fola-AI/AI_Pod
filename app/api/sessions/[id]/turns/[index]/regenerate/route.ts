@@ -7,7 +7,7 @@ import {
 } from '@/lib/db/queries';
 import { planFromStoredTurn } from '@/lib/orchestrator';
 import { executeTurn } from '@/lib/execute-turn';
-import { MissingKeyError, ProviderError } from '@/lib/providers/errors';
+import { providerErrorPayload } from '@/lib/provider-error-response';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -37,26 +37,12 @@ export async function POST(
   try {
     executed = await executeTurn(session.config, priorTurns, plan);
   } catch (err) {
-    if (err instanceof MissingKeyError) {
-      return NextResponse.json(
-        { error: err.message, code: 'missing_key', provider: err.provider },
-        { status: 400 },
-      );
-    }
-    if (err instanceof ProviderError) {
-      return NextResponse.json(
-        {
-          error: err.message,
-          code: err.isRateLimit ? 'rate_limit' : 'provider_error',
-          provider: err.provider,
-        },
-        { status: 502 },
-      );
-    }
-    return NextResponse.json(
-      { error: (err as Error).message },
-      { status: 500 },
-    );
+    const { status, body } = providerErrorPayload(err, {
+      agentId: plan.speakerId,
+      agentName: plan.speakerDisplayName,
+      modelId: plan.modelId,
+    });
+    return NextResponse.json(body, { status });
   }
 
   try {
@@ -66,6 +52,8 @@ export async function POST(
       outputTokens: executed.outputTokens,
       costUsd: executed.costUsd,
       latencyMs: executed.latencyMs,
+      wasTruncated: executed.wasTruncated,
+      modelId: executed.modelId,
     });
     await markTurnsStaleAfter(id, idx);
     const totals = await recomputeAggregates(id);

@@ -5,12 +5,27 @@ import type {
   GenerateParams,
   GenerateResult,
   ProviderAdapter,
+  ProviderStopReason,
 } from '@/lib/types';
 import { ProviderError } from './errors';
 import { postJson } from './http';
 
 const API_URL = 'https://api.anthropic.com/v1/messages';
 const API_VERSION = '2023-06-01';
+
+function mapAnthropicStop(reason: string): ProviderStopReason {
+  switch (reason) {
+    case 'end_turn':
+    case 'stop_sequence':
+      return 'complete';
+    case 'max_tokens':
+      return 'max_tokens';
+    case 'refusal':
+      return 'refusal';
+    default:
+      return reason ? 'other' : 'complete';
+  }
+}
 
 export function createAnthropicAdapter(apiKey: string): ProviderAdapter {
   return {
@@ -53,6 +68,7 @@ export function createAnthropicAdapter(apiKey: string): ProviderAdapter {
         throw new ProviderError(`anthropic ${status}: ${detail}`, {
           status,
           provider: 'anthropic',
+          rawBody: text,
         });
       }
 
@@ -63,12 +79,16 @@ export function createAnthropicAdapter(apiKey: string): ProviderAdapter {
             .map((b: any) => b.text)
             .join('')
         : '';
+      const rawStopReason: string = json?.stop_reason ?? '';
 
       return {
         text: outText.trim(),
+        stopReason: mapAnthropicStop(rawStopReason),
+        rawStopReason,
         inputTokens: json?.usage?.input_tokens ?? 0,
         outputTokens: json?.usage?.output_tokens ?? 0,
         latencyMs,
+        rawModel: json?.model,
       };
     },
   };

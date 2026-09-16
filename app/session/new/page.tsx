@@ -192,6 +192,15 @@ export default function NewSessionPage() {
     });
   }
 
+  // Same-model guardrail (P0-3 §4).
+  const distinctModels = new Set(agents.map((a) => a.modelId)).size;
+  const modelWarning =
+    distinctModels === 1
+      ? 'All participants are using the same model. The discussion will not show variation between models.'
+      : distinctModels < agents.length
+        ? 'Two or more agents share a model — those voices will sound similar.'
+        : null;
+
   function updateAgent(id: string, patch: Partial<AgentDraft>) {
     setAgents((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a)));
   }
@@ -420,6 +429,18 @@ export default function NewSessionPage() {
             3 is cleanest on video, 4 is comfortable. At 5–6, raise the word
             target so everyone gets enough turns.
           </p>
+          {modelWarning && (
+            <div
+              className={
+                'rounded-md border px-3 py-2 text-xs ' +
+                (distinctModels === 1
+                  ? 'border-destructive/40 bg-destructive/5 text-destructive'
+                  : 'border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-500')
+              }
+            >
+              ⚠ {modelWarning}
+            </div>
+          )}
           {agents.map((a, i) => (
             <div key={a.id} className="rounded-lg border p-4 space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">

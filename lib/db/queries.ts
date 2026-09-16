@@ -27,6 +27,7 @@ function rowToTurn(r: TurnRow): Turn {
     latencyMs: r.latencyMs,
     wasEdited: r.wasEdited,
     isStale: r.isStale,
+    wasTruncated: r.wasTruncated,
     createdAt:
       r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt),
   };
@@ -139,6 +140,7 @@ export async function appendTurn(
       latencyMs: turn.latencyMs,
       wasEdited: turn.wasEdited,
       isStale: turn.isStale,
+      wasTruncated: turn.wasTruncated,
     })
     .returning();
 
@@ -164,6 +166,17 @@ export async function setSessionStatus(
   await db.update(sessions).set({ status }).where(eq(sessions.id, id));
 }
 
+/** Replace a session's config (mid-session substitute-model / remove-agent). */
+export async function updateSessionConfig(
+  id: string,
+  config: SessionConfig,
+): Promise<void> {
+  await db
+    .update(sessions)
+    .set({ config, title: config.title })
+    .where(eq(sessions.id, id));
+}
+
 /** Inline hand-edit of a single turn's text. */
 export async function updateTurnText(
   sessionId: string,
@@ -172,7 +185,7 @@ export async function updateTurnText(
 ): Promise<void> {
   await db
     .update(turns)
-    .set({ text, wasEdited: true })
+    .set({ text, wasEdited: true, wasTruncated: false })
     .where(and(eq(turns.sessionId, sessionId), eq(turns.index, index)));
 }
 
@@ -186,11 +199,18 @@ export async function replaceTurn(
     outputTokens: number;
     costUsd: number;
     latencyMs: number;
+    wasTruncated?: boolean;
+    modelId?: string;
   },
 ): Promise<void> {
   await db
     .update(turns)
-    .set({ ...fields, wasEdited: false, isStale: false })
+    .set({
+      ...fields,
+      wasTruncated: fields.wasTruncated ?? false,
+      wasEdited: false,
+      isStale: false,
+    })
     .where(and(eq(turns.sessionId, sessionId), eq(turns.index, index)));
 }
 

@@ -8,9 +8,23 @@ import type {
   GenerateResult,
   ProviderAdapter,
   ProviderId,
+  ProviderStopReason,
 } from '@/lib/types';
 import { ProviderError } from './errors';
 import { postJson } from './http';
+
+function mapOpenAIStop(reason: string): ProviderStopReason {
+  switch (reason) {
+    case 'stop':
+      return 'complete';
+    case 'length':
+      return 'max_tokens';
+    case 'content_filter':
+      return 'refusal';
+    default:
+      return reason ? 'other' : 'complete';
+  }
+}
 
 export interface OpenAICompatibleConfig {
   id: ProviderId;
@@ -84,18 +98,23 @@ export function createOpenAICompatibleAdapter(
         throw new ProviderError(`${cfg.id} ${status}: ${detail}`, {
           status,
           provider: cfg.id,
+          rawBody: text,
         });
       }
 
       const outText: string = json?.choices?.[0]?.message?.content ?? '';
       const inputTokens: number = json?.usage?.prompt_tokens ?? 0;
       const outputTokens: number = json?.usage?.completion_tokens ?? 0;
+      const rawStopReason: string = json?.choices?.[0]?.finish_reason ?? '';
 
       return {
         text: outText.trim(),
+        stopReason: mapOpenAIStop(rawStopReason),
+        rawStopReason,
         inputTokens,
         outputTokens,
         latencyMs,
+        rawModel: json?.model,
       };
     },
   };

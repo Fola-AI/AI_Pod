@@ -10,20 +10,40 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import type { Session, Turn } from '@/lib/types';
+import type { Session, SessionConfig, Turn } from '@/lib/types';
 import {
   postTurn,
   regenerateTurn,
   editTurn,
   deleteTurn,
   extractClaims,
+  preflight,
+  substituteAgentModel,
+  removeAgent,
   type Claim,
+  type ApiError,
+  type PreflightCheck,
 } from '@/lib/client';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { formatUsd } from '@/lib/cost';
 import { FORMATS } from '@/lib/formats';
 import { getPersona } from '@/lib/personas';
-import { getModel } from '@/config/models';
+import { getModel, MODELS } from '@/config/models';
 import { toJson, toMarkdown, toSpeakerManifest } from '@/lib/export';
 import { MODERATOR_ID } from '@/lib/orchestrator';
 
@@ -45,11 +65,18 @@ export function SessionView({ initial }: { initial: Session }) {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [config, setConfig] = useState<SessionConfig>(initial.config);
+  const [fatal, setFatal] = useState<ApiError | null>(null);
+  const [preflightFails, setPreflightFails] = useState<PreflightCheck[] | null>(
+    null,
+  );
+  const [preflighting, setPreflighting] = useState(false);
+  const [subModelId, setSubModelId] = useState<string>('');
+
   const runningRef = useRef(false);
   const stopRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  const { config } = initial;
   const complete = status === 'complete';
 
   useEffect(() => {
@@ -61,6 +88,7 @@ export function SessionView({ initial }: { initial: Session }) {
     runningRef.current = true;
     setRunning(true);
     setError(null);
+    setFatal(null);
     setStatus('running');
 
     try {
@@ -81,21 +109,40 @@ export function SessionView({ initial }: { initial: Session }) {
           setStatus('complete');
           break;
         }
-        if (!runningRef.current) break; // hard stop (unused for now)
+        if (!runningRef.current) break;
       }
     } catch (err) {
-      const e = err as Error & { code?: string; provider?: string };
-      const msg =
-        e.code === 'missing_key'
-          ? `No API key for ${e.provider}. Add it to .env.local and restart the server, or substitute the model.`
-          : e.message;
-      setError(msg);
-      toast.error(msg);
+      const e = err as ApiError;
+      // Fatal → halt and surface the provider's verbatim message with recovery
+      // options. Transient (already retried server-side) also halts with Retry.
+      setFatal(e);
     } finally {
       runningRef.current = false;
       setRunning(false);
     }
   }, [initial.id]);
+
+  // Pre-flight before turn 1 (P0-3 §2): validate every model, then run.
+  const startRun = useCallback(async () => {
+    setFatal(null);
+    setError(null);
+    if (turns.length === 0) {
+      setPreflighting(true);
+      try {
+        const r = await preflight(initial.id);
+        if (!r.ok) {
+          setPreflightFails(r.checks.filter((c) => !c.ok));
+          return;
+        }
+      } catch (err) {
+        toast.error((err as Error).message);
+        return;
+      } finally {
+        setPreflighting(false);
+      }
+    }
+    runLoop();
+  }, [initial.id, turns.length, runLoop]);
 
   function requestStop() {
     stopRef.current = true;
@@ -195,8 +242,41 @@ export function SessionView({ initial }: { initial: Session }) {
     }
   }
 
+  // --- Fatal-error recovery (P0-2 §4) ---
+  async function substituteAndContinue() {
+    if (!fatal?.agentId || !subModelId) return;
+    try {
+      const updated = await substituteAgentModel(
+        initial.id,
+        fatal.agentId,
+        subModelId,
+      );
+      setConfig(updated.config);
+      setFatal(null);
+      setSubModelId('');
+      toast.success('Model substituted — continuing.');
+      runLoop();
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  }
+
+  async function removeAndContinue() {
+    if (!fatal?.agentId) return;
+    try {
+      const updated = await removeAgent(initial.id, fatal.agentId);
+      setConfig(updated.config);
+      setFatal(null);
+      toast.success('Participant removed — continuing with the rest.');
+      runLoop();
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  }
+
   const sessionObj: Session = {
     ...initial,
+    config,
     turns,
     status,
     totalWords,
@@ -237,8 +317,14 @@ export function SessionView({ initial }: { initial: Session }) {
       {/* Controls */}
       <div className="sticky top-0 z-10 -mx-4 px-4 py-3 bg-background/90 backdrop-blur border-b flex flex-wrap items-center gap-3">
         {!complete && (
-          <Button onClick={runLoop} disabled={running}>
-            {running ? 'Running…' : turns.length ? 'Continue' : 'Run'}
+          <Button onClick={startRun} disabled={running || preflighting}>
+            {preflighting
+              ? 'Checking models…'
+              : running
+                ? 'Running…'
+                : turns.length
+                  ? 'Continue'
+                  : 'Run'}
           </Button>
         )}
         {running && (
@@ -393,6 +479,119 @@ export function SessionView({ initial }: { initial: Session }) {
           )}
         </div>
       )}
+
+      {/* Fatal provider failure (P0-2 §3, §4) */}
+      <Dialog open={!!fatal} onOpenChange={(o) => !o && setFatal(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {fatal?.failureClass === 'fatal'
+                ? 'Session halted — provider error'
+                : 'Turn failed'}
+            </DialogTitle>
+            <DialogDescription>
+              {fatal?.agentName} on {fatal?.model} ·{' '}
+              {fatal?.failureClass ?? 'error'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-md border bg-muted/40 p-3 text-sm font-mono whitespace-pre-wrap max-h-48 overflow-y-auto">
+            {fatal?.message}
+          </div>
+          {fatal?.failureClass === 'fatal' && (
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">
+                Substitute a model for this participant and continue from here:
+              </p>
+              <div className="flex gap-2">
+                <Select
+                  value={subModelId}
+                  onValueChange={(v) => v && setSubModelId(v)}
+                >
+                  <SelectTrigger className="flex-1">
+                    <SelectValue>
+                      {(v) =>
+                        MODELS.find((m) => m.id === v)?.displayName ??
+                        'Pick a model'
+                      }
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MODELS.map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.displayName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="outline"
+                  disabled={!subModelId}
+                  onClick={substituteAndContinue}
+                >
+                  Substitute
+                </Button>
+              </div>
+            </div>
+          )}
+          <DialogFooter className="flex-wrap gap-2">
+            <Button
+              onClick={() => {
+                setFatal(null);
+                runLoop();
+              }}
+            >
+              Retry
+            </Button>
+            {fatal?.agentId && fatal.agentId !== MODERATOR_ID && (
+              <Button variant="outline" onClick={removeAndContinue}>
+                Remove {fatal.agentName}
+              </Button>
+            )}
+            <Button variant="ghost" onClick={() => setFatal(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Pre-flight failure (P0-3 §2) */}
+      <Dialog
+        open={!!preflightFails}
+        onOpenChange={(o) => !o && setPreflightFails(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Can&apos;t start — model check failed</DialogTitle>
+            <DialogDescription>
+              Every model is tested before the session starts. Fix these and try
+              again — the session was not started.
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="space-y-2 text-sm">
+            {preflightFails?.map((c) => (
+              <li key={c.modelId} className="rounded-md border p-2">
+                <span className="font-medium">{c.displayName}</span>
+                <p className="text-xs font-mono text-destructive mt-1 whitespace-pre-wrap">
+                  {c.message}
+                </p>
+              </li>
+            ))}
+          </ul>
+          <DialogFooter>
+            <Button
+              onClick={() => {
+                setPreflightFails(null);
+                startRun();
+              }}
+            >
+              Re-check
+            </Button>
+            <Button variant="ghost" onClick={() => setPreflightFails(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -446,6 +645,11 @@ function TurnBlock({
           <span className="text-[10px] text-amber-600 dark:text-amber-500">
             stale — context changed
           </span>
+        )}
+        {turn.wasTruncated && (
+          <Badge variant="outline" className="text-[10px] border-destructive/50 text-destructive">
+            ⚠ truncated
+          </Badge>
         )}
         {editable && !editing && (
           <span className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">

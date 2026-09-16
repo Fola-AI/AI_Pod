@@ -84,9 +84,10 @@ export function getAdapter(provider: ProviderId): ProviderAdapter {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Per-call retry with exponential backoff, 3 attempts (PRD §9.4).
- * Rate-limit (429) responses back off harder. Missing-key errors are not
- * retried — they will never succeed.
+ * Retry with exponential backoff (P0-2). Only `transient` failures are retried
+ * (429 with longer backoff, 5xx, network). `fatal` failures (bad/absent key,
+ * insufficient credits, quota, model-not-found, malformed request) throw
+ * immediately — retrying them wastes time and money and hides the real problem.
  */
 export async function withRetry<T>(
   fn: () => Promise<T>,
@@ -98,7 +99,10 @@ export async function withRetry<T>(
       return await fn();
     } catch (err) {
       lastErr = err;
-      if (err instanceof MissingKeyError) throw err;
+      // Fatal provider failures are never retried.
+      if (err instanceof ProviderError && err.failureClass === 'fatal') {
+        throw err;
+      }
       if (i === attempts - 1) break;
       const isRate = err instanceof ProviderError && err.isRateLimit;
       const base = isRate ? 4000 : 1000;

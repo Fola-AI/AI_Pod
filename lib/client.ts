@@ -4,15 +4,35 @@ import type { Session, Turn } from '@/lib/types';
 import type { SessionSummary } from '@/lib/db/queries';
 import type { ProviderId } from '@/lib/types';
 
+export interface ApiError extends Error {
+  status?: number;
+  code?: string;
+  failureClass?: 'fatal' | 'transient' | 'unknown';
+  provider?: string;
+  agentId?: string;
+  agentName?: string;
+  modelId?: string;
+  model?: string;
+  recoverable?: boolean;
+}
+
 async function jsonOrThrow(res: Response) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw Object.assign(new Error(data.error || `Request failed (${res.status})`), {
-      status: res.status,
-      code: data.code,
-      provider: data.provider,
-      recoverable: data.recoverable,
-    });
+    throw Object.assign(
+      new Error(data.error || `Request failed (${res.status})`),
+      {
+        status: res.status,
+        code: data.code,
+        failureClass: data.failureClass,
+        provider: data.provider,
+        agentId: data.agentId,
+        agentName: data.agentName,
+        modelId: data.modelId,
+        model: data.model,
+        recoverable: data.recoverable,
+      },
+    ) as ApiError;
   }
   return data;
 }
@@ -123,4 +143,47 @@ export async function extractClaims(sessionId: string): Promise<Claim[]> {
   });
   const data = await jsonOrThrow(res);
   return data.claims;
+}
+
+export interface PreflightCheck {
+  modelId: string;
+  displayName: string;
+  ok: boolean;
+  message?: string;
+}
+
+export async function preflight(
+  sessionId: string,
+): Promise<{ ok: boolean; checks: PreflightCheck[] }> {
+  const res = await fetch(`/api/sessions/${sessionId}/preflight`, {
+    method: 'POST',
+  });
+  return jsonOrThrow(res);
+}
+
+export async function substituteAgentModel(
+  sessionId: string,
+  agentId: string,
+  modelId: string,
+): Promise<Session> {
+  const res = await fetch(`/api/sessions/${sessionId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'substitute', agentId, modelId }),
+  });
+  const data = await jsonOrThrow(res);
+  return data.session;
+}
+
+export async function removeAgent(
+  sessionId: string,
+  agentId: string,
+): Promise<Session> {
+  const res = await fetch(`/api/sessions/${sessionId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'remove', agentId }),
+  });
+  const data = await jsonOrThrow(res);
+  return data.session;
 }

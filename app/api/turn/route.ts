@@ -4,7 +4,8 @@ import { getSession, appendTurn } from '@/lib/db/queries';
 import { planNextTurn } from '@/lib/orchestrator';
 import { executeTurn } from '@/lib/execute-turn';
 import { countWords } from '@/lib/cost';
-import { MissingKeyError, ProviderError } from '@/lib/providers/errors';
+import { providerErrorPayload } from '@/lib/provider-error-response';
+import { EmptyContentError } from '@/lib/providers/errors';
 
 export const runtime = 'nodejs';
 // One turn = one provider call. Give the function room for a slow model.
@@ -58,32 +59,27 @@ export async function POST(request: Request) {
   try {
     executed = await executeTurn(session.config, session.turns, plan);
   } catch (err) {
-    if (err instanceof MissingKeyError) {
-      return NextResponse.json(
-        {
-          error: err.message,
-          code: 'missing_key',
-          provider: err.provider,
-          recoverable: true,
-        },
-        { status: 400 },
-      );
-    }
-    if (err instanceof ProviderError) {
-      return NextResponse.json(
-        {
-          error: err.message,
-          code: err.isRateLimit ? 'rate_limit' : 'provider_error',
-          provider: err.provider,
-          recoverable: true,
-        },
-        { status: 502 },
-      );
-    }
-    return NextResponse.json(
-      { error: (err as Error).message, code: 'unknown', recoverable: true },
-      { status: 500 },
+    // An error never becomes a turn — nothing is persisted (P0-2 §1).
+    const { status, body } = providerErrorPayload(err, {
+      agentId: plan.speakerId,
+      agentName: plan.speakerDisplayName,
+      modelId: plan.modelId,
+    });
+    return NextResponse.json(body, { status });
+  }
+
+  // Backstop: a genuinely empty successful completion must never be stored
+  // (P0-2 §6). executeTurn already fails these fatally, but guard here too.
+  if (executed.text.trim().length < 20) {
+    const { status, body } = providerErrorPayload(
+      new EmptyContentError(plan.modelId, plan.speakerDisplayName),
+      {
+        agentId: plan.speakerId,
+        agentName: plan.speakerDisplayName,
+        modelId: plan.modelId,
+      },
     );
+    return NextResponse.json(body, { status });
   }
 
   const index = session.turns.length;

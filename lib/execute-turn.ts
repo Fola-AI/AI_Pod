@@ -1,9 +1,19 @@
-// Executes a single planned turn: assembles prompts, calls the provider (with
-// retry), and returns a Turn object ready to persist. Used by /api/turn.
+// Executes a single planned turn: assembles prompts, calls the provider, and
+// returns a Turn ready to persist. Used by /api/turn and regenerate.
+//
+// P0-1: max_tokens is set generously and is NEVER derived from maxWordsPerTurn
+// (that only caused truncation). Concision is a prompt instruction. Every result
+// is validated; truncated turns get one doubled-budget retry, empty turns get
+// two retries then fail fatally (P0-2).
 
-import type { SessionConfig, Turn } from '@/lib/types';
-import { getModel } from '@/config/models';
+import type {
+  GenerateResult,
+  SessionConfig,
+  Turn,
+} from '@/lib/types';
+import { getModel, MODELS } from '@/config/models';
 import { getAdapter, withRetry } from '@/lib/providers';
+import { EmptyContentError } from '@/lib/providers/errors';
 import {
   buildAgentSystemPrompt,
   buildModeratorSystemPrompt,
@@ -12,6 +22,22 @@ import {
 import type { TurnPlan } from '@/lib/orchestrator';
 import { MODERATOR_ID } from '@/lib/orchestrator';
 import { countWords, turnCostUsd } from '@/lib/cost';
+import { validateTurn } from '@/lib/turn-validation';
+
+/** Generous, word-budget-independent token ceiling (P0-1 §2). */
+function maxTokensFor(plan: TurnPlan): number {
+  const floor = plan.speakerId === MODERATOR_ID ? 400 : 600;
+  return Math.max(floor, plan.maxWords * 4);
+}
+
+/** Map the provider-reported model string back to a registry id, if we can. */
+function resolveModelId(fallbackId: string, rawModel?: string): string {
+  if (!rawModel) return fallbackId;
+  const match = MODELS.find(
+    (m) => m.apiModelString === rawModel || m.id === rawModel,
+  );
+  return match?.id ?? fallbackId;
+}
 
 export async function executeTurn(
   config: SessionConfig,
@@ -32,27 +58,48 @@ export async function executeTurn(
         holdsSeat: plan.holdsSeat,
       });
 
-  // The transcript so far goes in the user message; the character is fixed in
-  // the system prompt. Everything is a single 'user' message per turn.
-  const userMessage = buildTurnUserMessage(
+  const baseUserMessage = buildTurnUserMessage(
     priorTurns,
     plan.turnType,
     plan.instructionOpts,
   );
+  const baseMaxTokens = maxTokensFor(plan);
 
-  // Cap output near the word budget. ~1.5 tokens/word + slight headroom keeps
-  // turns from sprawling well past maxWordsPerTurn (PRD acceptance §7).
-  const maxTokens = Math.max(90, Math.ceil(plan.maxWords * 1.7));
+  const call = (maxTokens: number, userMessage: string) =>
+    withRetry(() =>
+      adapter.generate({
+        apiModelString: model.apiModelString,
+        systemPrompt,
+        messages: [{ role: 'user', content: userMessage }],
+        temperature: plan.temperature,
+        maxTokens,
+      }),
+    );
 
-  const result = await withRetry(() =>
-    adapter.generate({
-      apiModelString: model.apiModelString,
-      systemPrompt,
-      messages: [{ role: 'user', content: userMessage }],
-      temperature: plan.temperature,
-      maxTokens,
-    }),
-  );
+  // Attempt 1.
+  let result: GenerateResult = await call(baseMaxTokens, baseUserMessage);
+  let v = validateTurn(result.text, result.stopReason);
+
+  // Empty: the call succeeded but content is blank. Retry twice, then fatal.
+  if (!v.valid && v.reason === 'empty') {
+    for (let i = 0; i < 2 && !v.valid; i++) {
+      result = await call(baseMaxTokens, baseUserMessage);
+      v = validateTurn(result.text, result.stopReason);
+    }
+    if (!v.valid && v.reason === 'empty') {
+      throw new EmptyContentError(model.provider, model.displayName);
+    }
+  }
+
+  // Truncated: retry once with double the budget and an explicit finish
+  // instruction. If it still doesn't land, persist it flagged.
+  let wasTruncated = false;
+  if (!v.valid && v.reason === 'truncated') {
+    const retryMessage = `${baseUserMessage}\n\nKeep this turn under ${plan.maxWords} words and finish your final sentence completely.`;
+    result = await call(baseMaxTokens * 2, retryMessage);
+    v = validateTurn(result.text, result.stopReason);
+    wasTruncated = !v.valid;
+  }
 
   const costUsd = turnCostUsd(
     plan.modelId,
@@ -65,7 +112,8 @@ export async function executeTurn(
     speakerDisplayName: plan.speakerDisplayName,
     turnType: plan.turnType,
     text: result.text,
-    modelId: plan.modelId,
+    // Read the model that actually produced this from the response path (P0-3).
+    modelId: resolveModelId(plan.modelId, result.rawModel),
     personaId: plan.personaId,
     inputTokens: result.inputTokens,
     outputTokens: result.outputTokens,
@@ -73,9 +121,8 @@ export async function executeTurn(
     latencyMs: result.latencyMs,
     wasEdited: false,
     isStale: false,
+    wasTruncated,
     createdAt: new Date().toISOString(),
-    // For convenience downstream:
-    // (word count is derived, not stored separately)
   };
 }
 

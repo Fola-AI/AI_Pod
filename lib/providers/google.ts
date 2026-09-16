@@ -5,11 +5,28 @@ import type {
   GenerateParams,
   GenerateResult,
   ProviderAdapter,
+  ProviderStopReason,
 } from '@/lib/types';
 import { ProviderError } from './errors';
 import { postJson } from './http';
 
 const BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
+
+function mapGoogleStop(reason: string): ProviderStopReason {
+  switch (reason) {
+    case 'STOP':
+      return 'complete';
+    case 'MAX_TOKENS':
+      return 'max_tokens';
+    case 'SAFETY':
+    case 'RECITATION':
+    case 'PROHIBITED_CONTENT':
+    case 'BLOCKLIST':
+      return 'refusal';
+    default:
+      return reason ? 'other' : 'complete';
+  }
+}
 
 export function createGoogleAdapter(apiKey: string): ProviderAdapter {
   return {
@@ -46,6 +63,7 @@ export function createGoogleAdapter(apiKey: string): ProviderAdapter {
         throw new ProviderError(`google ${status}: ${detail}`, {
           status,
           provider: 'google',
+          rawBody: text,
         });
       }
 
@@ -53,12 +71,16 @@ export function createGoogleAdapter(apiKey: string): ProviderAdapter {
       const outText: string = Array.isArray(parts)
         ? parts.map((p: any) => p.text ?? '').join('')
         : '';
+      const rawStopReason: string = json?.candidates?.[0]?.finishReason ?? '';
 
       return {
         text: outText.trim(),
+        stopReason: mapGoogleStop(rawStopReason),
+        rawStopReason,
         inputTokens: json?.usageMetadata?.promptTokenCount ?? 0,
         outputTokens: json?.usageMetadata?.candidatesTokenCount ?? 0,
         latencyMs,
+        rawModel: json?.modelVersion,
       };
     },
   };

@@ -113,6 +113,7 @@ export interface Turn {
   latencyMs: number;
   wasEdited: boolean;
   isStale: boolean;
+  wasTruncated: boolean; // Retry still hit the token ceiling; flag for the UI/export
   createdAt: string;
 }
 
@@ -144,12 +145,21 @@ export interface GenerateParams {
   maxTokens: number;
 }
 
+// Normalised finish reason across providers.
+export type ProviderStopReason = 'complete' | 'max_tokens' | 'refusal' | 'other';
+
 export interface GenerateResult {
   text: string;
+  stopReason: ProviderStopReason;
+  rawStopReason: string; // Provider's original value, for logging
   inputTokens: number;
   outputTokens: number;
   latencyMs: number;
+  rawModel?: string; // Model string the provider reports having used
 }
+
+// Alias requested in the P0 brief; same shape as GenerateResult.
+export type ProviderResponse = GenerateResult;
 
 export interface ProviderAdapter {
   id: ProviderId;
