@@ -18,6 +18,7 @@ import {
   buildAgentSystemPrompt,
   buildModeratorSystemPrompt,
   buildTurnUserMessage,
+  extractOpener,
 } from '@/lib/prompts';
 import type { TurnPlan } from '@/lib/orchestrator';
 import { MODERATOR_ID } from '@/lib/orchestrator';
@@ -58,10 +59,20 @@ export async function executeTurn(
         holdsSeat: plan.holdsSeat,
       });
 
+  // Feed this speaker their own last one or two openers so they vary (agents
+  // only — the moderator's brief turns don't need it).
+  const previousOpeners = isModerator
+    ? []
+    : priorTurns
+        .filter((t) => t.speakerId === plan.speakerId)
+        .slice(-2)
+        .map((t) => extractOpener(t.text));
+
   const baseUserMessage = buildTurnUserMessage(
     priorTurns,
     plan.turnType,
     plan.instructionOpts,
+    previousOpeners,
   );
   const baseMaxTokens = maxTokensFor(plan);
 

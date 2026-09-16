@@ -227,14 +227,35 @@ export function turnInstruction(
   );
 }
 
-/** Assemble the full user message for a turn: transcript + instruction. */
+/** The opening clause of a turn — first sentence, capped to a few words. */
+export function extractOpener(text: string, maxWords = 10): string {
+  const firstSentence = (text.trim().match(/^[^.!?…]*[.!?…]?/)?.[0] ?? text).trim();
+  const words = firstSentence.split(/\s+/).filter(Boolean);
+  return words.length <= maxWords
+    ? firstSentence
+    : words.slice(0, maxWords).join(' ') + '…';
+}
+
+/**
+ * Assemble the full user message for a turn: transcript + instruction, plus a
+ * light nudge listing the speaker's own recent openers so they don't start the
+ * same way twice running (models don't reliably self-audit — passing the actual
+ * openers works where the standing rule alone doesn't).
+ */
 export function buildTurnUserMessage(
   turns: Turn[],
   turnType: TurnType,
   opts: TurnInstructionOpts = {},
+  previousOpeners: string[] = [],
 ): string {
+  const openerNudge =
+    previousOpeners.length > 0
+      ? `\n\nYour last openings were: ${previousOpeners
+          .map((o) => `"${o}"`)
+          .join('; ')}. Start this turn differently.`
+      : '';
   return `DISCUSSION SO FAR:\n\n${renderTranscript(turns)}\n\n---\n${turnInstruction(
     turnType,
     opts,
-  )}`;
+  )}${openerNudge}`;
 }
