@@ -72,6 +72,9 @@ export function SessionView({ initial }: { initial: Session }) {
   );
   const [preflighting, setPreflighting] = useState(false);
   const [subModelId, setSubModelId] = useState<string>('');
+  const [pendingExport, setPendingExport] = useState<'markdown' | 'pdf' | null>(
+    null,
+  );
 
   const runningRef = useRef(false);
   const stopRef = useRef(false);
@@ -283,6 +286,27 @@ export function SessionView({ initial }: { initial: Session }) {
     totalCostUsd,
   };
 
+  // Spoken exports (Markdown/PDF) stay clean of inline markers, but must not
+  // ship silently if a turn was truncated — block with an override.
+  const truncatedTurns = turns.filter((t) => t.wasTruncated);
+  function doSpokenExport(fmt: 'markdown' | 'pdf') {
+    if (fmt === 'markdown') {
+      download(
+        `${slug(config.title)}.md`,
+        toMarkdown(sessionObj),
+        'text/markdown',
+      );
+    } else {
+      const a = document.createElement('a');
+      a.href = `/api/sessions/${initial.id}/export/pdf`;
+      a.click();
+    }
+  }
+  function requestSpokenExport(fmt: 'markdown' | 'pdf') {
+    if (truncatedTurns.length > 0) setPendingExport(fmt);
+    else doSpokenExport(fmt);
+  }
+
   const formatLabel = FORMATS[config.format]?.label ?? config.format;
   const targetPct = Math.min(
     100,
@@ -356,11 +380,7 @@ export function SessionView({ initial }: { initial: Session }) {
               Export
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                onClick={() =>
-                  download(`${slug(config.title)}.md`, toMarkdown(sessionObj), 'text/markdown')
-                }
-              >
+              <DropdownMenuItem onClick={() => requestSpokenExport('markdown')}>
                 Markdown
               </DropdownMenuItem>
               <DropdownMenuItem
@@ -374,13 +394,7 @@ export function SessionView({ initial }: { initial: Session }) {
               >
                 JSON
               </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => {
-                  const a = document.createElement('a');
-                  a.href = `/api/sessions/${initial.id}/export/pdf`;
-                  a.click();
-                }}
-              >
+              <DropdownMenuItem onClick={() => requestSpokenExport('pdf')}>
                 PDF
               </DropdownMenuItem>
               <DropdownMenuItem
@@ -549,6 +563,47 @@ export function SessionView({ initial }: { initial: Session }) {
             )}
             <Button variant="ghost" onClick={() => setFatal(null)}>
               Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Truncation export guard — clean exports, but never silently clean */}
+      <Dialog
+        open={!!pendingExport}
+        onOpenChange={(o) => !o && setPendingExport(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Truncated turns in this session</DialogTitle>
+            <DialogDescription>
+              These turns were cut off and never finished their sentence.
+              Regenerate or edit them before publishing. You can export anyway.
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="space-y-1 text-sm max-h-48 overflow-y-auto">
+            {truncatedTurns.map((t) => (
+              <li key={t.index} className="rounded-md border px-2 py-1">
+                Turn #{t.index} — {t.speakerDisplayName}:{' '}
+                <span className="text-muted-foreground">
+                  …{t.text.trim().slice(-40)}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                const fmt = pendingExport;
+                setPendingExport(null);
+                if (fmt) doSpokenExport(fmt);
+              }}
+            >
+              Export anyway
+            </Button>
+            <Button variant="ghost" onClick={() => setPendingExport(null)}>
+              Cancel
             </Button>
           </DialogFooter>
         </DialogContent>
