@@ -68,8 +68,43 @@ function shouldBeginClosings(
   return words >= roundTarget && roundComplete;
 }
 
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * If a moderator interjection names a participant, that participant must answer
+ * next — overriding rotation. Prefer a direct address (name at the start, or
+ * "Name," / "Name?" / "Name:"); fall back to the first name mentioned.
+ */
+function findDirectedAgent(config: SessionConfig, text: string) {
+  let addressed: { agent: AgentConfig; idx: number } | null = null;
+  let mentioned: { agent: AgentConfig; idx: number } | null = null;
+  for (const agent of config.agents) {
+    const n = escapeRegex(agent.displayName);
+    const addr = text.match(new RegExp(`(^|\\n)\\s*${n}\\b|\\b${n}\\s*[,?:]`, 'i'));
+    if (addr && (addressed === null || addr.index! < addressed.idx)) {
+      addressed = { agent, idx: addr.index! };
+    }
+    const men = text.search(new RegExp(`\\b${n}\\b`, 'i'));
+    if (men >= 0 && (mentioned === null || men < mentioned.idx)) {
+      mentioned = { agent, idx: men };
+    }
+  }
+  return (addressed ?? mentioned)?.agent ?? null;
+}
+
 /** Plan a turn inside the round loop (agents rotate, moderator interjects). */
 function planRoundTurn(config: SessionConfig, turns: Turn[]): TurnPlan {
+  // A moderator interjection that named someone directs the next turn to them.
+  const last = turns[turns.length - 1];
+  if (last && last.turnType === 'moderator') {
+    const directed = findDirectedAgent(config, last.text);
+    if (directed) {
+      return agentPlan(config, directed, 'standard', { moderatorDirected: true });
+    }
+  }
+
   const roundTurns = turns.filter(
     (t) => t.turnType === 'standard' || t.turnType === 'moderator',
   );

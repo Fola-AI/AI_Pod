@@ -12,6 +12,7 @@ import {
   index,
 } from 'drizzle-orm/pg-core';
 import type {
+  Claim,
   SessionConfig,
   SessionStatus,
   TurnType,
@@ -24,6 +25,7 @@ export const sessions = pgTable('sessions', {
   status: text('status').$type<SessionStatus>().notNull().default('draft'),
   totalWords: integer('total_words').notNull().default(0),
   totalCostUsd: doublePrecision('total_cost_usd').notNull().default(0),
+  claims: jsonb('claims').$type<Claim[]>(),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()
     .defaultNow(),

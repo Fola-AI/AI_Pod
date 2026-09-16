@@ -1,8 +1,10 @@
 // Client-side API helpers.
 
-import type { Session, Turn } from '@/lib/types';
+import type { Claim, Session, Turn } from '@/lib/types';
 import type { SessionSummary } from '@/lib/db/queries';
 import type { ProviderId } from '@/lib/types';
+
+export type { Claim };
 
 export interface ApiError extends Error {
   status?: number;
@@ -130,12 +132,6 @@ export async function deleteTurn(
     method: 'DELETE',
   });
   return jsonOrThrow(res);
-}
-
-export interface Claim {
-  type: 'statistic' | 'date' | 'study' | 'quote' | 'other';
-  claim: string;
-  speaker?: string;
 }
 
 export async function extractClaims(sessionId: string): Promise<Claim[]> {

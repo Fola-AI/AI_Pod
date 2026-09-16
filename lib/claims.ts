@@ -2,16 +2,13 @@
 // that extracts every statistic, date, named study, and quotation so the
 // operator can verify before publishing. Deliberately simple.
 
-import type { Session } from '@/lib/types';
+import type { Claim, Session } from '@/lib/types';
 import { MODELS, getModel } from '@/config/models';
 import { getAdapter, isProviderAvailable, withRetry } from '@/lib/providers';
-import { renderTranscript } from '@/lib/prompts';
 
-export interface Claim {
-  type: 'statistic' | 'date' | 'study' | 'quote' | 'other';
-  claim: string;
-  speaker?: string;
-}
+export type { Claim };
+
+const CLAIM_TYPES = ['statistic', 'date', 'study', 'person', 'quote'] as const;
 
 /** Pick a capable, available model to run extraction with. */
 function pickExtractionModel(session: Session): string | null {
@@ -30,13 +27,23 @@ function pickExtractionModel(session: Session): string | null {
 
 const EXTRACTION_SYSTEM = `You extract checkable factual claims from a discussion transcript so a human can fact-check them before publishing.
 
-Extract every: statistic or number presented as fact; specific date or year; named study, report, book, or source; and direct quotation attributed to a real person or organisation.
+Extract every: statistic or number presented as fact; specific date or year; named study, report, book, or source; named individual (a real person referenced by name); and direct quotation attributed to a real person or organisation.
 
 Do NOT extract opinions, predictions, rhetorical questions, or general statements. Only concrete, verifiable claims.
 
+Each turn is labelled "[Turn N] Speaker:". Record the turn number the claim came from as turnIndex, and the speaker's name.
+
 Respond with ONLY a JSON array, no prose, no code fences. Each item:
-{"type":"statistic|date|study|quote|other","claim":"the exact claim, quoted or closely paraphrased","speaker":"the speaker name"}
+{"type":"statistic|date|study|person|quote|other","claim":"the exact claim, quoted or closely paraphrased","speaker":"the speaker name","turnIndex":N}
 If there are no checkable claims, return [].`;
+
+/** Transcript with explicit turn indices so the model can attribute each claim. */
+function renderIndexedTranscript(session: Session): string {
+  if (session.turns.length === 0) return '(No turns.)';
+  return session.turns
+    .map((t) => `[Turn ${t.index}] ${t.speakerDisplayName}: ${t.text}`)
+    .join('\n\n');
+}
 
 function parseClaims(text: string): Claim[] {
   let t = text.trim();
@@ -51,11 +58,15 @@ function parseClaims(text: string): Claim[] {
     return arr
       .filter((c) => c && typeof c.claim === 'string')
       .map((c) => ({
-        type: ['statistic', 'date', 'study', 'quote'].includes(c.type)
-          ? c.type
+        type: (CLAIM_TYPES as readonly string[]).includes(c.type)
+          ? (c.type as Claim['type'])
           : 'other',
         claim: String(c.claim),
         speaker: c.speaker ? String(c.speaker) : undefined,
+        turnIndex:
+          typeof c.turnIndex === 'number' && Number.isFinite(c.turnIndex)
+            ? c.turnIndex
+            : undefined,
       }));
   } catch {
     return [];
@@ -70,7 +81,7 @@ export async function extractClaims(session: Session): Promise<Claim[]> {
   const model = getModel(modelId)!;
   const adapter = getAdapter(model.provider);
 
-  const transcript = renderTranscript(session.turns);
+  const transcript = renderIndexedTranscript(session);
   const result = await withRetry(() =>
     adapter.generate({
       apiModelString: model.apiModelString,

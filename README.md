@@ -63,7 +63,19 @@ It is a **script generation tool**, not a public product. See
 
 Models live in [`config/models.ts`](config/models.ts) and are expected to be
 edited by hand — IDs and prices move monthly. Adding a model needs no code change
-beyond that file (as long as an adapter exists for its provider).
+beyond that file (as long as an adapter exists for its provider). The in-app
+**Models** screen (`/registry`) shows the registry with per-provider key status
+and a Test-connection button.
+
+## Sessions run in the browser (resume on return)
+
+The turn loop is **client-orchestrated** (one turn = one `POST /api/turn`),
+persisted server-side after every turn. There is deliberately **no background
+runner**: as a single-user app on Vercel's free tier, a queue or cron just to
+keep generating while a tab is closed isn't worth the complexity. Navigating away
+does not abort a session — its state is saved and its status stays `running`; the
+Dashboard shows it with a **Resume** control that reopens it and continues from
+the last saved turn. Generation simply pauses while no tab is driving it.
 
 ## Build status
 

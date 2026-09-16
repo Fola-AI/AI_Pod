@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getSession } from '@/lib/db/queries';
+import { getSession, setSessionClaims } from '@/lib/db/queries';
 import { extractClaims } from '@/lib/claims';
 import { MissingKeyError, ProviderError } from '@/lib/providers/errors';
 
@@ -20,6 +20,7 @@ export async function POST(
   }
   try {
     const claims = await extractClaims(session);
+    await setSessionClaims(id, claims); // persisted → included in JSON export
     return NextResponse.json({ claims });
   } catch (err) {
     if (err instanceof MissingKeyError || err instanceof ProviderError) {

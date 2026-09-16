@@ -6,34 +6,33 @@
 
 export type FailureClass = 'fatal' | 'transient';
 
-// Signals in a provider's error message that mean "do not retry — operator must
-// act": credit/quota exhaustion, suspension, bad model, bad key. Matched even on
-// a 429 (OpenAI returns "insufficient_quota" as 429). Deliberately specific:
-// the bare words "billing"/"payment" are NOT here because providers put them in
-// rate-limit upsell URLs (e.g. Groq's ".../settings/billing"), which would
-// wrongly mark a genuine per-minute rate limit as fatal.
-const FATAL_MESSAGE_PATTERNS =
-  /insufficient|quota|credits?\b|out of credit|exhaust|suspend|deactivat|not found|does not exist|do not have access|unauthorized|invalid api key|invalid x-api-key|invalid.*key|permission denied/i;
-
-// A message that clearly means a transient per-minute/per-second rate limit,
-// even if other fatal-looking words appear nearby.
-const RATE_LIMIT_PATTERNS =
-  /rate limit|rate_limit|tokens per (minute|second)|requests per (minute|second)|try again in|tpm|rpm/i;
+// HTTP status is the primary signal for classification. Message text is used
+// ONLY as a tiebreaker on 429 (and on a status-less network error), and only
+// for an explicit statement of exhausted credits/quota or a suspended account.
+// The bare word "billing" is deliberately excluded: providers put it in
+// rate-limit upsell URLs (e.g. Groq's ".../settings/billing"), and a URL in a
+// rate-limit body must not override a 429.
+const CREDIT_OR_SUSPENSION =
+  /insufficient|quota|\bcredits?\b|deplet|exhaust|billing hard limit|exceeded your current|suspend|deactivat/i;
 
 export function classifyFailure(
   status: number | undefined,
   message: string,
 ): FailureClass {
-  // A genuine rate limit is transient, even on 429 with a billing upsell URL.
-  if (message && RATE_LIMIT_PATTERNS.test(message)) return 'transient';
-  // Otherwise, credit/quota/auth/model signals are fatal even on a 429.
-  if (message && FATAL_MESSAGE_PATTERNS.test(message)) return 'fatal';
-  if (status === undefined) return 'transient'; // network/timeout
-  if (status === 401 || status === 403) return 'fatal'; // bad/absent key
-  if (status === 402) return 'fatal'; // payment required
-  if (status === 404) return 'fatal'; // model not found
-  if (status === 400) return 'fatal'; // malformed request
-  if (status === 429) return 'transient'; // genuine rate limit
+  const msg = message ?? '';
+  if (status === undefined) {
+    // Network / timeout: transient, unless the body names credit exhaustion.
+    return CREDIT_OR_SUSPENSION.test(msg) ? 'fatal' : 'transient';
+  }
+  if (status === 401 || status === 402 || status === 403 || status === 404) {
+    return 'fatal'; // bad/absent key, payment required, model not found
+  }
+  if (status === 400) return 'fatal'; // malformed request — won't succeed on retry
+  if (status === 429) {
+    // Rate limit is transient unless the body explicitly states no credits or
+    // a suspended account (e.g. OpenAI returns insufficient_quota as 429).
+    return CREDIT_OR_SUSPENSION.test(msg) ? 'fatal' : 'transient';
+  }
   if (status >= 500) return 'transient'; // server error
   return 'transient';
 }

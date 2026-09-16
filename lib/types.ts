@@ -119,6 +119,15 @@ export interface Turn {
 
 export type SessionStatus = 'draft' | 'running' | 'complete' | 'aborted';
 
+// Claims checklist (PRD accuracy requirement). Extracted post-session for the
+// operator to verify before publishing.
+export interface Claim {
+  type: 'statistic' | 'date' | 'study' | 'person' | 'quote' | 'other';
+  claim: string;
+  speaker?: string;
+  turnIndex?: number;
+}
+
 export interface Session {
   id: string;
   config: SessionConfig;
@@ -126,6 +135,7 @@ export interface Session {
   status: SessionStatus;
   totalWords: number;
   totalCostUsd: number;
+  claims?: Claim[]; // Persisted after extraction; included in the JSON export
   createdAt: string;
   completedAt?: string;
 }

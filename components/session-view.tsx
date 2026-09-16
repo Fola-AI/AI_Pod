@@ -204,7 +204,9 @@ export function SessionView({ initial }: { initial: Session }) {
 
   const canEdit = !running;
 
-  const [claims, setClaims] = useState<Claim[] | null>(null);
+  const [claims, setClaims] = useState<Claim[] | null>(
+    initial.claims ?? null,
+  );
   const [claimsLoading, setClaimsLoading] = useState(false);
   const [checked, setChecked] = useState<Record<number, boolean>>({});
 
@@ -478,8 +480,12 @@ export function SessionView({ initial }: { initial: Session }) {
                       {c.type}
                     </Badge>
                     {c.claim}
-                    {c.speaker && (
-                      <span className="text-muted-foreground"> — {c.speaker}</span>
+                    {(c.speaker || c.turnIndex != null) && (
+                      <span className="text-muted-foreground">
+                        {' — '}
+                        {c.speaker}
+                        {c.turnIndex != null && ` · turn #${c.turnIndex}`}
+                      </span>
                     )}
                   </span>
                 </li>

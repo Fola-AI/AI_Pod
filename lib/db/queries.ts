@@ -5,6 +5,7 @@ import { db } from './index';
 import { sessions, turns } from './schema';
 import type { SessionRow, TurnRow } from './schema';
 import type {
+  Claim,
   Session,
   SessionConfig,
   SessionStatus,
@@ -41,6 +42,7 @@ function rowToSession(s: SessionRow, ts: TurnRow[]): Session {
     status: s.status,
     totalWords: s.totalWords,
     totalCostUsd: s.totalCostUsd,
+    claims: s.claims ?? undefined,
     createdAt:
       s.createdAt instanceof Date ? s.createdAt.toISOString() : String(s.createdAt),
     completedAt: s.completedAt
@@ -164,6 +166,14 @@ export async function setSessionStatus(
   status: SessionStatus,
 ): Promise<void> {
   await db.update(sessions).set({ status }).where(eq(sessions.id, id));
+}
+
+/** Persist the extracted claims checklist for a session. */
+export async function setSessionClaims(
+  id: string,
+  claims: Claim[],
+): Promise<void> {
+  await db.update(sessions).set({ claims }).where(eq(sessions.id, id));
 }
 
 /** Replace a session's config (mid-session substitute-model / remove-agent). */
