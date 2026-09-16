@@ -8,6 +8,7 @@
 
 import type {
   GenerateResult,
+  ProviderAdapter,
   SessionConfig,
   Turn,
 } from '@/lib/types';
@@ -48,13 +49,16 @@ export async function executeTurn(
   config: SessionConfig,
   priorTurns: Turn[],
   plan: TurnPlan,
+  // Test seam: inject a stub adapter instead of resolving one from env keys.
+  overrideAdapter?: ProviderAdapter,
 ): Promise<Omit<Turn, 'index'> | null> {
   const model = getModel(plan.modelId);
   if (!model) {
     throw new Error(`Unknown model "${plan.modelId}".`);
   }
 
-  const adapter = getAdapter(model.provider); // throws MissingKeyError if no key
+  // getAdapter throws MissingKeyError if no key (skipped when a stub is injected).
+  const adapter = overrideAdapter ?? getAdapter(model.provider);
 
   const isModerator = plan.speakerId === MODERATOR_ID;
   const systemPrompt = isModerator

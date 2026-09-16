@@ -206,7 +206,9 @@ const AGENT_INSTRUCTIONS: Partial<Record<TurnType, string>> = {
 // A-1: interjection prompt (exact spec text).
 export const INTERJECTION_INSTRUCTION = `The discussion is mid-flow. React to what was just said in one short line — the kind of thing someone actually says out loud while another person is talking. Agreement, surprise, a laugh, a small objection, or asking them to repeat something.
 
-3 to 15 words. Do not make a new argument. Do not start a new topic. If nothing warrants a reaction right now, output exactly: [SKIP]`;
+3 to 15 words. Do not make a new argument. Do not start a new topic.
+
+Most of the time the right move is [SKIP]. React only when you genuinely would out loud. If nothing warrants a reaction right now, output exactly: [SKIP]`;
 
 export interface TurnInstructionOpts {
   /** For an agent who has been directly addressed by the moderator. */
