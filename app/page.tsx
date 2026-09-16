@@ -88,10 +88,10 @@ export default async function Dashboard() {
               <div className="flex items-center gap-1 shrink-0">
                 <Button
                   render={<Link href={`/session/${s.id}`} />}
-                  variant="ghost"
+                  variant={s.status === 'running' ? 'default' : 'ghost'}
                   size="sm"
                 >
-                  Open
+                  {s.status === 'running' ? 'Resume' : 'Open'}
                 </Button>
                 <DeleteSessionButton id={s.id} />
               </div>

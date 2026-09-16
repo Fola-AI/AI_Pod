@@ -93,14 +93,13 @@ export default function NewSessionPage() {
   >('medium');
   const [saving, setSaving] = useState(false);
 
-  const [available, setAvailable] = useState<Record<ProviderId, boolean> | null>(
-    null,
-  );
+  type ProviderStatus = Awaited<ReturnType<typeof fetchProviders>>;
+  const [providers, setProviders] = useState<ProviderStatus | null>(null);
 
   useEffect(() => {
     fetchProviders()
-      .then((r) => setAvailable(r.available))
-      .catch(() => setAvailable(null));
+      .then(setProviders)
+      .catch(() => setProviders(null));
   }, []);
 
   function addSource() {
@@ -482,7 +481,7 @@ export default function NewSessionPage() {
                   <Label className="text-xs">Model</Label>
                   <ModelSelect
                     value={a.modelId}
-                    available={available}
+                    status={providers}
                     onChange={(v) => updateAgent(a.id, { modelId: v })}
                   />
                 </div>
@@ -671,7 +670,7 @@ export default function NewSessionPage() {
             <Label className="text-xs">Model</Label>
             <ModelSelect
               value={modModelId}
-              available={available}
+              status={providers}
               onChange={setModModelId}
             />
           </div>
@@ -776,14 +775,21 @@ export default function NewSessionPage() {
 
 function ModelSelect({
   value,
-  available,
+  status,
   onChange,
 }: {
   value: string;
-  available: Record<ProviderId, boolean> | null;
+  status: Awaited<ReturnType<typeof fetchProviders>> | null;
   onChange: (v: string) => void;
 }) {
-  const providers = Array.from(new Set(MODELS.map((m) => m.provider)));
+  const providerList = Array.from(new Set(MODELS.map((m) => m.provider)));
+  // Reason a model can't be picked: no adapter, or no key. Null status = loading.
+  function pickState(p: ProviderId): { ok: boolean; reason: string } {
+    if (!status) return { ok: true, reason: '…' };
+    if (!status.implemented[p]) return { ok: false, reason: 'no adapter' };
+    if (!status.hasKey[p]) return { ok: false, reason: 'no key' };
+    return { ok: status.available[p], reason: 'unavailable' };
+  }
   return (
     <Select value={value} onValueChange={(v) => v && onChange(v)}>
       <SelectTrigger>
@@ -792,18 +798,18 @@ function ModelSelect({
         </SelectValue>
       </SelectTrigger>
       <SelectContent>
-        {providers.map((p) => (
+        {providerList.map((p) => (
           <SelectGroup key={p}>
             <SelectLabel>{PROVIDER_LABEL[p]}</SelectLabel>
             {MODELS.filter((m) => m.provider === p).map((m) => {
-              const ok = available ? available[m.provider] : true;
+              const { ok, reason } = pickState(m.provider);
               return (
                 <SelectItem key={m.id} value={m.id} disabled={!ok}>
                   <span className="flex items-center gap-2">
                     {m.displayName}
                     {!ok && (
                       <Badge variant="outline" className="text-[10px]">
-                        {available ? 'unavailable' : '…'}
+                        {reason}
                       </Badge>
                     )}
                   </span>

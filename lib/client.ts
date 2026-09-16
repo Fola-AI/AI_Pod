@@ -40,6 +40,7 @@ async function jsonOrThrow(res: Response) {
 export async function fetchProviders(): Promise<{
   available: Record<ProviderId, boolean>;
   implemented: Record<ProviderId, boolean>;
+  hasKey: Record<ProviderId, boolean>;
 }> {
   const res = await fetch('/api/providers', { cache: 'no-store' });
   return jsonOrThrow(res);

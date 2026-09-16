@@ -9,9 +9,12 @@ export async function GET() {
   const providers = Object.keys(PROVIDER_ENV_KEY) as ProviderId[];
   const available: Record<string, boolean> = {};
   const implemented: Record<string, boolean> = {};
+  const hasKey: Record<string, boolean> = {};
   for (const p of providers) {
     implemented[p] = isProviderImplemented(p);
-    available[p] = isProviderImplemented(p) && hasProviderKey(p);
+    hasKey[p] = hasProviderKey(p);
+    available[p] = implemented[p] && hasKey[p];
   }
-  return NextResponse.json({ available, implemented });
+  // Key values are never sent — only presence.
+  return NextResponse.json({ available, implemented, hasKey });
 }
