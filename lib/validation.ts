@@ -44,6 +44,9 @@ export const createSessionSchema = z
       'scenario',
       'hot-seat',
       'deliberation',
+      'shared-curiosity',
+      'quickfire',
+      'story-swap',
     ]),
     domain: z.string().default('general'),
     sourceMaterial: z.array(sourceDocSchema).optional(),
@@ -53,6 +56,10 @@ export const createSessionSchema = z
     targetWordCount: z.number().int().min(300).max(20000).default(2600),
     maxTurns: z.number().int().min(4).max(MAX_TURNS_CAP).default(24),
     budgetCapUsd: z.number().positive().optional(),
+    interjectionRate: z
+      .enum(['off', 'low', 'medium', 'high'])
+      .default('medium'),
+    openingBanter: z.boolean().default(true),
   })
   .refine((d) => d.agents.length === d.agentCount, {
     message: 'agents length must equal agentCount',
@@ -90,6 +97,8 @@ export function toSessionConfig(input: CreateSessionInput): SessionConfig {
     targetWordCount: input.targetWordCount,
     maxTurns: input.maxTurns,
     budgetCapUsd: input.budgetCapUsd,
+    interjectionRate: input.interjectionRate,
+    openingBanter: input.openingBanter,
     createdAt: new Date().toISOString(),
   };
 }

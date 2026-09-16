@@ -45,6 +45,14 @@ export async function POST(
     return NextResponse.json(body, { status });
   }
 
+  // Regenerating an interjection that came back [SKIP] — nothing to write.
+  if (executed === null) {
+    return NextResponse.json(
+      { error: 'The model declined to react ([SKIP]). Try again.' },
+      { status: 409 },
+    );
+  }
+
   try {
     await replaceTurn(id, idx, {
       text: executed.text,

@@ -41,12 +41,12 @@ export async function POST(request: Request) {
     typeof session.config.budgetCapUsd === 'number' &&
     session.totalCostUsd >= session.config.budgetCapUsd;
 
-  const plan = planNextTurn(session.config, session.turns, {
+  const initialPlan = planNextTurn(session.config, session.turns, {
     stopRequested: stopRequested || budgetExceeded,
   });
 
   // Nothing left to do — the session is already complete.
-  if (!plan) {
+  if (!initialPlan) {
     return NextResponse.json({
       complete: true,
       turn: null,
@@ -55,31 +55,60 @@ export async function POST(request: Request) {
     });
   }
 
+  let activePlan = initialPlan;
   let executed;
   try {
-    executed = await executeTurn(session.config, session.turns, plan);
+    executed = await executeTurn(session.config, session.turns, activePlan);
+    // Interjection returned [SKIP] (null): fall through to the next full turn
+    // in the same request — no empty response, no re-roll loop (A-1).
+    if (executed === null) {
+      const fallthrough = planNextTurn(session.config, session.turns, {
+        stopRequested: stopRequested || budgetExceeded,
+        suppressInterjection: true,
+      });
+      if (!fallthrough) {
+        return NextResponse.json({
+          complete: true,
+          turn: null,
+          totalWords: session.totalWords,
+          totalCostUsd: session.totalCostUsd,
+        });
+      }
+      activePlan = fallthrough;
+      executed = await executeTurn(session.config, session.turns, activePlan);
+    }
   } catch (err) {
     // An error never becomes a turn — nothing is persisted (P0-2 §1).
     const { status, body } = providerErrorPayload(err, {
-      agentId: plan.speakerId,
-      agentName: plan.speakerDisplayName,
-      modelId: plan.modelId,
+      agentId: activePlan.speakerId,
+      agentName: activePlan.speakerDisplayName,
+      modelId: activePlan.modelId,
     });
     return NextResponse.json(body, { status });
   }
 
-  // Backstop: a genuinely empty successful completion must never be stored
-  // (P0-2 §6). executeTurn already fails these fatally, but guard here too.
-  if (executed.text.trim().length < 20) {
+  // A full turn must never be stored empty (P0-2 §6). Interjections are
+  // legitimately short, so the floor applies only to full turns; executeTurn
+  // already returns null for a [SKIP]/blank interjection.
+  if (executed !== null && executed.turnClass === 'full' && executed.text.trim().length < 20) {
     const { status, body } = providerErrorPayload(
-      new EmptyContentError(plan.modelId, plan.speakerDisplayName),
+      new EmptyContentError(executed.modelId, executed.speakerDisplayName),
       {
-        agentId: plan.speakerId,
-        agentName: plan.speakerDisplayName,
-        modelId: plan.modelId,
+        agentId: executed.speakerId,
+        agentName: executed.speakerDisplayName,
+        modelId: executed.modelId,
       },
     );
     return NextResponse.json(body, { status });
+  }
+  // Both interjection attempt and its fallthrough skipped (very unlikely).
+  if (executed === null) {
+    return NextResponse.json({
+      complete: false,
+      turn: null,
+      totalWords: session.totalWords,
+      totalCostUsd: session.totalCostUsd,
+    });
   }
 
   const index = session.turns.length;
@@ -87,12 +116,13 @@ export async function POST(request: Request) {
   const totalWords = session.totalWords + words;
   const totalCostUsd = session.totalCostUsd + executed.costUsd;
 
-  // Is this the last turn? Re-plan with the new turn included.
+  // Is this the last turn? Re-plan with the new turn included (interjections
+  // never end a session, so suppress them for the completion check).
   const provisionalTurn = { ...executed, index };
   const nextPlan = planNextTurn(
     session.config,
     [...session.turns, provisionalTurn],
-    {},
+    { suppressInterjection: true },
   );
   const complete = nextPlan === null;
   const status = complete ? 'complete' : 'running';

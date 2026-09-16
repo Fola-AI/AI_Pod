@@ -676,6 +676,29 @@ function TurnBlock({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(turn.text);
 
+  // Interjections render as a compact aside, not a full block.
+  if (turn.turnClass === 'interjection') {
+    return (
+      <div className="group flex items-center gap-2 pl-4 text-sm text-muted-foreground italic">
+        <span className="text-[10px] not-italic uppercase tracking-wide">
+          {turn.speakerDisplayName}
+        </span>
+        <span>“{turn.text}”</span>
+        {editable && (
+          <Button
+            variant="ghost"
+            size="xs"
+            disabled={busy}
+            onClick={onDelete}
+            className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive"
+          >
+            Delete
+          </Button>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div
       className={

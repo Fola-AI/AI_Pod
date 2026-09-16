@@ -11,7 +11,11 @@ import type {
   TurnType,
 } from '@/lib/types';
 import { getPersona } from '@/lib/personas';
-import { getFormatFraming, isStanceBearing } from '@/lib/formats';
+import {
+  getFormatFraming,
+  isAgreementInverted,
+  isStanceBearing,
+} from '@/lib/formats';
 
 function renderSourceMaterial(docs?: SourceDoc[]): string {
   if (!docs || docs.length === 0) return '';
@@ -68,8 +72,13 @@ Responding
 - Respond to what has actually been said. Name the participant you are
   answering and restate their specific claim before you respond to it.
 - Do not summarise the discussion so far. The audience has heard it.
-- Do not be agreeable for the sake of it. If you think someone is
-  wrong, say so and say why.
+${
+      isAgreementInverted(config.format)
+        ? `- You may agree, and you may build on what someone else said rather
+  than countering it. If someone changes your mind, say so out loud.`
+        : `- Do not be agreeable for the sake of it. If you think someone is
+  wrong, say so and say why.`
+    }
 - Vary how you open. Do not begin consecutive turns with the same
   construction. You have the transcript — check how you opened last
   time and do something different.
@@ -194,6 +203,11 @@ const AGENT_INSTRUCTIONS: Partial<Record<TurnType, string>> = {
     'Give your closing statement. Your position in two sentences. Then one point another participant made that genuinely changed your thinking, and why. End on one line a listener could repeat to someone else.',
 };
 
+// A-1: interjection prompt (exact spec text).
+export const INTERJECTION_INSTRUCTION = `The discussion is mid-flow. React to what was just said in one short line — the kind of thing someone actually says out loud while another person is talking. Agreement, surprise, a laugh, a small objection, or asking them to repeat something.
+
+3 to 15 words. Do not make a new argument. Do not start a new topic. If nothing warrants a reaction right now, output exactly: [SKIP]`;
+
 export interface TurnInstructionOpts {
   /** For an agent who has been directly addressed by the moderator. */
   moderatorDirected?: boolean;
@@ -203,12 +217,25 @@ export interface TurnInstructionOpts {
   moderatorClosing?: boolean;
   /** Moderator calling for closing statements. */
   moderatorCallClosings?: boolean;
+  /** Moderator's light opening chat, before the topic (A-2). */
+  moderatorBanter?: boolean;
+  /** An agent's short banter reply (A-2). */
+  banter?: boolean;
+  /** An off-rotation reaction interjection (A-1). */
+  interjection?: boolean;
 }
 
 export function turnInstruction(
   turnType: TurnType,
   opts: TurnInstructionOpts = {},
 ): string {
+  if (opts.interjection) return INTERJECTION_INSTRUCTION;
+  if (opts.moderatorBanter) {
+    return 'Open the show with a little light chat before the topic. Greet the participants by name and ask one easy, low-stakes question — unrelated or only loosely related to the topic. Keep it dry and offhand, the way a host who knows these people already opens. Do not introduce the topic yet.';
+  }
+  if (opts.banter) {
+    return 'Reply to the host\'s opening chat in one or two lines, in character. 40 words maximum. This is small talk before the real discussion — dry, mild, the way people who already know each other talk. Not enthusiastic, not "great to be here". Do not start on the topic yet.';
+  }
   if (opts.moderatorOpening) {
     return 'Open the discussion. Introduce the topic in one or two sentences, then introduce each participant by name. Do not state any position yourself.';
   }

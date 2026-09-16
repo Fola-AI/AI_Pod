@@ -18,7 +18,13 @@ export type SessionFormat =
   | 'postmortem'
   | 'scenario'
   | 'hot-seat'
-  | 'deliberation';
+  | 'deliberation'
+  // Non-adversarial formats (A-6)
+  | 'shared-curiosity'
+  | 'quickfire'
+  | 'story-swap';
+
+export type InterjectionRate = 'off' | 'low' | 'medium' | 'high';
 
 export type ModelTier = 'frontier' | 'mid' | 'fast';
 
@@ -81,8 +87,10 @@ export interface SessionConfig {
   agents: AgentConfig[];
   moderator: ModeratorConfig;
   targetWordCount: number; // Default 2600
-  maxTurns: number; // Default 24, hard cap 40
+  maxTurns: number; // Default 24, hard cap 40 (counts full turns, not interjections)
   budgetCapUsd?: number; // Optional. Jump to closings once actual cost exceeds it
+  interjectionRate?: InterjectionRate; // Agent reaction interjections. Default 'medium'
+  openingBanter?: boolean; // Light chat before the topic. Default true
   createdAt: string;
 }
 
@@ -91,6 +99,8 @@ export interface SessionConfig {
 // transcript (server-authoritative planning). For display/export, any turn whose
 // speakerId is 'moderator' is simply "MODERATOR".
 export type TurnType =
+  | 'moderator-banter' // moderator's light opening chat (before the topic)
+  | 'banter' // an agent's short banter reply
   | 'moderator-opening' // moderator introduces topic + participants
   | 'opening' // an agent's opening position
   | 'standard' // an agent's in-discussion response
@@ -99,11 +109,16 @@ export type TurnType =
   | 'closing' // an agent's closing statement
   | 'moderator-closing'; // moderator closes, declines a winner
 
+// A full turn is a substantive contribution; an interjection is a 3–15 word
+// off-rotation reaction (A-1).
+export type TurnClass = 'full' | 'interjection';
+
 export interface Turn {
   index: number;
   speakerId: string; // agent.id or 'moderator'
   speakerDisplayName: string;
   turnType: TurnType;
+  turnClass: TurnClass; // 'full' | 'interjection'
   text: string;
   modelId: string; // Which model actually produced this
   personaId?: string;

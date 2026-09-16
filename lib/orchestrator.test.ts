@@ -29,6 +29,8 @@ const config: SessionConfig = {
   },
   targetWordCount: 2600,
   maxTurns: 30,
+  openingBanter: false, // isolate round-loop routing
+  interjectionRate: 'off', // no random interjection roll in these tests
   createdAt: '',
 };
 
@@ -39,6 +41,7 @@ function turn(speakerId: string, name: string, turnType: Turn['turnType'], text:
     speakerId,
     speakerDisplayName: name,
     turnType,
+    turnClass: 'full',
     text,
     modelId: 'claude-haiku-4-5',
     inputTokens: 0,

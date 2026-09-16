@@ -10,6 +10,7 @@ export interface FormatMeta {
   bestFor: string;
   shape: string; // Short description shown in the builder
   formatFraming: string; // Injected into system prompts
+  agreementInverted?: boolean; // A-6: replace "don't be agreeable" with "build on each other"
 }
 
 export const FORMATS: Record<SessionFormat, FormatMeta> = {
@@ -67,6 +68,35 @@ export const FORMATS: Record<SessionFormat, FormatMeta> = {
     formatFraming:
       'This is a deliberation. A concrete decision is on the table, but no vote will be taken. Surface the real trade-offs and constraints, and be explicit about what you would need to know to decide.',
   },
+  'shared-curiosity': {
+    id: 'shared-curiosity',
+    label: 'Shared curiosity',
+    stancesAssigned: false,
+    bestFor: 'Open questions nobody has settled. "What actually makes a city feel alive?"',
+    shape: 'Nobody holds a position. Everyone is genuinely working out an answer together, thinking aloud, allowed to change their mind mid-sentence.',
+    formatFraming:
+      'This is a shared-curiosity conversation. No one holds a position. You are all genuinely trying to work out an answer together — think aloud, follow each other\'s ideas, and change your mind mid-sentence if that\'s where the thinking goes. Build on what others say.',
+    agreementInverted: true,
+  },
+  quickfire: {
+    id: 'quickfire',
+    label: 'Quickfire',
+    stancesAssigned: false,
+    bestFor: 'A fast, light segment or short episode. Many short answers.',
+    shape: 'The moderator poses a rapid series of short questions; each participant answers briefly. Fast, light, high turn count.',
+    formatFraming:
+      'This is a quickfire round. The moderator fires short questions; answer fast and tight — a few sentences at most, never a speech. Keep the pace up and do not over-explain.',
+  },
+  'story-swap': {
+    id: 'story-swap',
+    label: 'Story swap',
+    stancesAssigned: false,
+    bestFor: 'Human, concrete topics. "A time technology let you down."',
+    shape: 'Each participant relates the topic to a specific, concrete situation. Narrative rather than argument.',
+    formatFraming:
+      'This is a story swap. Relate the topic to a specific, concrete situation — a real scene with detail, not an argument. Listen to each other\'s stories and build on them; it is fine to be moved or to say one reminded you of your own.',
+    agreementInverted: true,
+  },
 };
 
 export const FORMAT_LIST: FormatMeta[] = Object.values(FORMATS);
@@ -77,4 +107,8 @@ export function isStanceBearing(format: SessionFormat): boolean {
 
 export function getFormatFraming(format: SessionFormat): string {
   return FORMATS[format].formatFraming;
+}
+
+export function isAgreementInverted(format: SessionFormat): boolean {
+  return FORMATS[format].agreementInverted === true;
 }

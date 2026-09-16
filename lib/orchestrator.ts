@@ -4,8 +4,10 @@
 
 import type {
   AgentConfig,
+  InterjectionRate,
   SessionConfig,
   Turn,
+  TurnClass,
   TurnType,
 } from '@/lib/types';
 import { countWords } from '@/lib/cost';
@@ -22,10 +24,19 @@ const INTERJECTION_EVERY: Record<
   high: 2,
 };
 
+// Probability of inserting an agent reaction interjection after a full turn (A-1).
+const INTERJECTION_PROBABILITY: Record<InterjectionRate, number> = {
+  off: 0,
+  low: 0.25,
+  medium: 0.5, // ~1 interjection per 2 full turns
+  high: 0.75,
+};
+
 export interface TurnPlan {
   speakerId: string; // agent.id or 'moderator'
   speakerDisplayName: string;
   turnType: TurnType;
+  turnClass: TurnClass;
   modelId: string;
   personaId?: string;
   temperature: number;
@@ -47,9 +58,13 @@ function shouldBeginClosings(
   stopRequested: boolean,
 ): boolean {
   if (stopRequested) return true;
-  if (turns.length >= config.maxTurns) return true;
+  // maxTurns counts substantive (full) turns, not reaction interjections.
+  const fullTurnCount = turns.filter((t) => t.turnClass !== 'interjection').length;
+  if (fullTurnCount >= config.maxTurns) return true;
 
-  const standardCount = turns.filter((t) => t.turnType === 'standard').length;
+  const standardCount = turns.filter(
+    (t) => t.turnType === 'standard' && t.turnClass !== 'interjection',
+  ).length;
   const words = accumulatedWords(turns);
   const roundComplete =
     standardCount > 0 && standardCount % config.agentCount === 0;
@@ -95,9 +110,14 @@ function findDirectedAgent(config: SessionConfig, text: string) {
 }
 
 /** Plan a turn inside the round loop (agents rotate, moderator interjects). */
-function planRoundTurn(config: SessionConfig, turns: Turn[]): TurnPlan {
-  // A moderator interjection that named someone directs the next turn to them.
+function planRoundTurn(
+  config: SessionConfig,
+  turns: Turn[],
+  suppressInterjection = false,
+): TurnPlan {
   const last = turns[turns.length - 1];
+
+  // A moderator interjection that named someone directs the next turn to them.
   if (last && last.turnType === 'moderator') {
     const directed = findDirectedAgent(config, last.text);
     if (directed) {
@@ -105,32 +125,57 @@ function planRoundTurn(config: SessionConfig, turns: Turn[]): TurnPlan {
     }
   }
 
-  const roundTurns = turns.filter(
-    (t) => t.turnType === 'standard' || t.turnType === 'moderator',
-  );
-  const standardCount = roundTurns.filter(
-    (t) => t.turnType === 'standard',
+  // Rotation and moderator cadence count full (non-interjection) turns only.
+  const fullStandardCount = turns.filter(
+    (t) => t.turnType === 'standard' && t.turnClass !== 'interjection',
   ).length;
-  const interjectionsDone = roundTurns.filter(
+  const nextFullAgent = config.agents[fullStandardCount % config.agentCount];
+
+  // Agent reaction interjection (A-1): roll after a full agent turn (not after a
+  // moderator turn or another interjection). On [SKIP] the route falls through
+  // to the next full turn, so we never chain or loop.
+  const rate = config.interjectionRate ?? 'medium';
+  if (
+    !suppressInterjection &&
+    last &&
+    last.turnClass !== 'interjection' &&
+    (last.turnType === 'standard' || last.turnType === 'opening') &&
+    Math.random() < INTERJECTION_PROBABILITY[rate]
+  ) {
+    const reactor = pickInterjector(config, last.speakerId, nextFullAgent.id);
+    if (reactor) {
+      return agentPlan(
+        config,
+        reactor,
+        'standard',
+        { interjection: true },
+        { turnClass: 'interjection', maxWords: 15 },
+      );
+    }
+  }
+
+  // Moderator interjection when due (counts full standard turns).
+  const interjectionsDone = turns.filter(
     (t) => t.turnType === 'moderator',
   ).length;
-
   const every = INTERJECTION_EVERY[config.moderator.interjectionFrequency];
-  const interjectionsExpected = Math.floor(standardCount / every);
-
-  if (standardCount > 0 && interjectionsDone < interjectionsExpected) {
+  const interjectionsExpected = Math.floor(fullStandardCount / every);
+  if (fullStandardCount > 0 && interjectionsDone < interjectionsExpected) {
     return moderatorPlan(config, 'moderator', {});
   }
 
-  const agent = config.agents[standardCount % config.agentCount];
-  return agentPlan(config, agent, 'standard', {});
+  return agentPlan(config, nextFullAgent, 'standard', {});
 }
 
 function moderatorPlan(
   config: SessionConfig,
   turnType: Extract<
     TurnType,
-    'moderator-opening' | 'moderator' | 'call-closings' | 'moderator-closing'
+    | 'moderator-banter'
+    | 'moderator-opening'
+    | 'moderator'
+    | 'call-closings'
+    | 'moderator-closing'
   >,
   instructionOpts: TurnInstructionOpts,
 ): TurnPlan {
@@ -138,6 +183,7 @@ function moderatorPlan(
     speakerId: MODERATOR_ID,
     speakerDisplayName: config.moderator.displayName || 'Moderator',
     turnType,
+    turnClass: 'full',
     modelId: config.moderator.modelId,
     temperature: config.moderator.temperature,
     maxWords: 60,
@@ -148,8 +194,9 @@ function moderatorPlan(
 function agentPlan(
   config: SessionConfig,
   agent: AgentConfig,
-  turnType: Extract<TurnType, 'opening' | 'standard' | 'closing'>,
+  turnType: Extract<TurnType, 'banter' | 'opening' | 'standard' | 'closing'>,
   instructionOpts: TurnInstructionOpts,
+  overrides: { turnClass?: TurnClass; maxWords?: number } = {},
 ): TurnPlan {
   // hot-seat: the seat holder rotates once at the midpoint.
   const holdsSeat =
@@ -158,14 +205,32 @@ function agentPlan(
     speakerId: agent.id,
     speakerDisplayName: agent.displayName,
     turnType,
+    turnClass: overrides.turnClass ?? 'full',
     modelId: agent.modelId,
     personaId: agent.personaId,
     temperature: agent.temperature,
-    maxWords: agent.maxWordsPerTurn,
+    maxWords: overrides.maxWords ?? agent.maxWordsPerTurn,
     agent,
     instructionOpts,
     holdsSeat,
   };
+}
+
+/** Pick a reacting agent for an interjection: not the last speaker, not the
+ *  next full speaker. Returns null if there's no suitable third party. */
+function pickInterjector(
+  config: SessionConfig,
+  lastSpeakerId: string,
+  nextFullSpeakerId: string,
+): AgentConfig | null {
+  const candidates = config.agents.filter(
+    (a) => a.id !== lastSpeakerId && a.id !== nextFullSpeakerId,
+  );
+  const pool = candidates.length > 0
+    ? candidates
+    : config.agents.filter((a) => a.id !== lastSpeakerId);
+  if (pool.length === 0) return null;
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 // Simple hot-seat helper: first agent holds the seat in the first half, second
@@ -180,12 +245,30 @@ function isSeatHolder(config: SessionConfig, agent: AgentConfig): boolean {
 export function planNextTurn(
   config: SessionConfig,
   turns: Turn[],
-  opts: { stopRequested?: boolean } = {},
+  opts: { stopRequested?: boolean; suppressInterjection?: boolean } = {},
 ): TurnPlan | null {
   const N = config.agentCount;
+  const bantering = config.openingBanter !== false; // default on
 
-  // 1. Moderator opening.
-  if (turns.length === 0) {
+  // 0. Opening banter (A-2): moderator light chat, then one reply per agent.
+  if (bantering) {
+    if (turns.length === 0) {
+      return moderatorPlan(config, 'moderator-banter', { moderatorBanter: true });
+    }
+    const banterReplies = turns.filter((t) => t.turnType === 'banter').length;
+    if (banterReplies < N) {
+      return agentPlan(
+        config,
+        config.agents[banterReplies],
+        'banter',
+        { banter: true },
+        { maxWords: 40 },
+      );
+    }
+  }
+
+  // 1. Moderator opening (topic introduction).
+  if (!turns.some((t) => t.turnType === 'moderator-opening')) {
     return moderatorPlan(config, 'moderator-opening', {
       moderatorOpening: true,
     });
@@ -206,7 +289,7 @@ export function planNextTurn(
         moderatorCallClosings: true,
       });
     }
-    return planRoundTurn(config, turns);
+    return planRoundTurn(config, turns, opts.suppressInterjection ?? false);
   }
 
   // 5. Agent closing statements, in order.
@@ -241,17 +324,20 @@ export function planFromStoredTurn(
 ): TurnPlan {
   if (turn.speakerId === MODERATOR_ID) {
     const instructionOpts: TurnInstructionOpts =
-      turn.turnType === 'moderator-opening'
-        ? { moderatorOpening: true }
-        : turn.turnType === 'call-closings'
-          ? { moderatorCallClosings: true }
-          : turn.turnType === 'moderator-closing'
-            ? { moderatorClosing: true }
-            : {};
+      turn.turnType === 'moderator-banter'
+        ? { moderatorBanter: true }
+        : turn.turnType === 'moderator-opening'
+          ? { moderatorOpening: true }
+          : turn.turnType === 'call-closings'
+            ? { moderatorCallClosings: true }
+            : turn.turnType === 'moderator-closing'
+              ? { moderatorClosing: true }
+              : {};
     return {
       speakerId: MODERATOR_ID,
       speakerDisplayName: config.moderator.displayName || 'Moderator',
       turnType: turn.turnType,
+      turnClass: 'full',
       modelId: config.moderator.modelId,
       temperature: config.moderator.temperature,
       maxWords: 60,
@@ -261,16 +347,23 @@ export function planFromStoredTurn(
 
   const agent =
     config.agents.find((a) => a.id === turn.speakerId) ?? config.agents[0];
+  const isInterjection = turn.turnClass === 'interjection';
+  const instructionOpts: TurnInstructionOpts = isInterjection
+    ? { interjection: true }
+    : turn.turnType === 'banter'
+      ? { banter: true }
+      : {};
   return {
     speakerId: agent.id,
     speakerDisplayName: agent.displayName,
     turnType: turn.turnType,
+    turnClass: turn.turnClass,
     modelId: agent.modelId,
     personaId: agent.personaId,
     temperature: agent.temperature,
-    maxWords: agent.maxWordsPerTurn,
+    maxWords: isInterjection ? 15 : turn.turnType === 'banter' ? 40 : agent.maxWordsPerTurn,
     agent,
-    instructionOpts: {},
+    instructionOpts,
     holdsSeat:
       config.format === 'hot-seat'
         ? agent.id === config.agents[0].id

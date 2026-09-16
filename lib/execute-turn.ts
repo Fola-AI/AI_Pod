@@ -40,11 +40,15 @@ function resolveModelId(fallbackId: string, rawModel?: string): string {
   return match?.id ?? fallbackId;
 }
 
+/**
+ * Executes a turn. Returns the turn to persist, or `null` when an interjection
+ * came back as [SKIP] (A-1: no turn is stored and the rotation continues).
+ */
 export async function executeTurn(
   config: SessionConfig,
   priorTurns: Turn[],
   plan: TurnPlan,
-): Promise<Omit<Turn, 'index'>> {
+): Promise<Omit<Turn, 'index'> | null> {
   const model = getModel(plan.modelId);
   if (!model) {
     throw new Error(`Unknown model "${plan.modelId}".`);
@@ -59,12 +63,62 @@ export async function executeTurn(
         holdsSeat: plan.holdsSeat,
       });
 
+  const buildTurn = (
+    result: GenerateResult,
+    wasTruncated: boolean,
+  ): Omit<Turn, 'index'> => ({
+    speakerId: plan.speakerId,
+    speakerDisplayName: plan.speakerDisplayName,
+    turnType: plan.turnType,
+    turnClass: plan.turnClass,
+    text: result.text,
+    modelId: resolveModelId(plan.modelId, result.rawModel),
+    personaId: plan.personaId,
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens,
+    costUsd: turnCostUsd(plan.modelId, result.inputTokens, result.outputTokens),
+    latencyMs: result.latencyMs,
+    wasEdited: false,
+    isStale: false,
+    wasTruncated,
+    createdAt: new Date().toISOString(),
+  });
+
+  // --- Interjection (A-1): short reaction, low token budget, [SKIP] allowed ---
+  if (plan.turnClass === 'interjection') {
+    // Nudge away from repeated reactions ("Exactly." three times over).
+    const recent = priorTurns
+      .filter((t) => t.speakerId === plan.speakerId && t.turnClass === 'interjection')
+      .slice(-2)
+      .map((t) => t.text.trim());
+    const nudge =
+      recent.length > 0
+        ? `\n\nYou recently reacted with: ${recent.map((r) => `"${r}"`).join('; ')}. React differently or stay quiet.`
+        : '';
+    const userMessage =
+      buildTurnUserMessage(priorTurns, plan.turnType, plan.instructionOpts) +
+      nudge;
+    const result = await withRetry(() =>
+      adapter.generate({
+        apiModelString: model.apiModelString,
+        systemPrompt,
+        messages: [{ role: 'user', content: userMessage }],
+        temperature: plan.temperature,
+        maxTokens: 100,
+      }),
+    );
+    const text = result.text.replace(/\[SKIP\]/gi, '').trim();
+    // [SKIP] or nothing usable → no turn (better than a forced reaction).
+    if (text.length === 0) return null;
+    return buildTurn({ ...result, text }, result.stopReason === 'max_tokens');
+  }
+
   // Feed this speaker their own last one or two openers so they vary (agents
   // only — the moderator's brief turns don't need it).
   const previousOpeners = isModerator
     ? []
     : priorTurns
-        .filter((t) => t.speakerId === plan.speakerId)
+        .filter((t) => t.speakerId === plan.speakerId && t.turnClass !== 'interjection')
         .slice(-2)
         .map((t) => extractOpener(t.text));
 
@@ -112,29 +166,7 @@ export async function executeTurn(
     wasTruncated = !v.valid;
   }
 
-  const costUsd = turnCostUsd(
-    plan.modelId,
-    result.inputTokens,
-    result.outputTokens,
-  );
-
-  return {
-    speakerId: plan.speakerId,
-    speakerDisplayName: plan.speakerDisplayName,
-    turnType: plan.turnType,
-    text: result.text,
-    // Read the model that actually produced this from the response path (P0-3).
-    modelId: resolveModelId(plan.modelId, result.rawModel),
-    personaId: plan.personaId,
-    inputTokens: result.inputTokens,
-    outputTokens: result.outputTokens,
-    costUsd,
-    latencyMs: result.latencyMs,
-    wasEdited: false,
-    isStale: false,
-    wasTruncated,
-    createdAt: new Date().toISOString(),
-  };
+  return buildTurn(result, wasTruncated);
 }
 
 export function turnWordCount(t: { text: string }): number {

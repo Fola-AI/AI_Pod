@@ -15,6 +15,7 @@ import type {
   Claim,
   SessionConfig,
   SessionStatus,
+  TurnClass,
   TurnType,
 } from '@/lib/types';
 
@@ -43,6 +44,10 @@ export const turns = pgTable(
     speakerId: text('speaker_id').notNull(),
     speakerDisplayName: text('speaker_display_name').notNull(),
     turnType: text('turn_type').$type<TurnType>().notNull(),
+    turnClass: text('turn_class')
+      .$type<TurnClass>()
+      .notNull()
+      .default('full'),
     text: text('text').notNull(),
     modelId: text('model_id').notNull(),
     personaId: text('persona_id'),

@@ -91,6 +91,10 @@ export default function NewSessionPage() {
   const [interjectionFrequency, setInterjectionFrequency] = useState<
     'low' | 'medium' | 'high'
   >('medium');
+  const [interjectionRate, setInterjectionRate] = useState<
+    'off' | 'low' | 'medium' | 'high'
+  >('medium');
+  const [openingBanter, setOpeningBanter] = useState(true);
   const [saving, setSaving] = useState(false);
 
   type ProviderStatus = Awaited<ReturnType<typeof fetchProviders>>;
@@ -277,6 +281,8 @@ export default function NewSessionPage() {
         targetWordCount,
         maxTurns,
         budgetCapUsd: budgetCap.trim() ? Number(budgetCap) : undefined,
+        interjectionRate,
+        openingBanter,
       });
       toast.success('Session created');
       router.push(`/session/${session.id}`);
@@ -699,6 +705,58 @@ export default function NewSessionPage() {
                 <SelectItem value="high">High (~every 2nd turn)</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Conversation texture */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Conversation</CardTitle>
+          <CardDescription>
+            Reactions and opening chat that make it sound like people, not a panel.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <Label className="text-xs">Interjections (short reactions)</Label>
+            <Select
+              value={interjectionRate}
+              onValueChange={(v) =>
+                v && setInterjectionRate(v as 'off' | 'low' | 'medium' | 'high')
+              }
+            >
+              <SelectTrigger>
+                <SelectValue>
+                  {(v) =>
+                    v === 'off'
+                      ? 'Off'
+                      : v === 'low'
+                        ? 'Low'
+                        : v === 'high'
+                          ? 'High'
+                          : 'Medium'
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="off">Off</SelectItem>
+                <SelectItem value="low">Low</SelectItem>
+                <SelectItem value="medium">Medium (~1 per 2 turns)</SelectItem>
+                <SelectItem value="high">High</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Opening banter</Label>
+            <label className="flex items-center gap-2 h-8 text-sm">
+              <input
+                type="checkbox"
+                checked={openingBanter}
+                onChange={(e) => setOpeningBanter(e.target.checked)}
+              />
+              Light chat before the topic
+            </label>
           </div>
         </CardContent>
       </Card>
