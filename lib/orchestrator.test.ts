@@ -93,6 +93,37 @@ describe('moderator-directed routing', () => {
     expect(plan.instructionOpts.moderatorDirected).toBe(true);
   });
 
+  it('routes to the addressee, not the name in a possessive (addressee first)', () => {
+    const turns = baseTurns();
+    turns.push(
+      turn(
+        'moderator',
+        'Moderator',
+        'moderator',
+        "Kimi, give me the strongest version of Tony's side.",
+      ),
+    );
+    const plan = planNextTurn(config, turns, {})!;
+    expect(plan.speakerId).toBe('a2'); // Kimi (addressed), not Tony (possessive)
+    expect(plan.instructionOpts.moderatorDirected).toBe(true);
+  });
+
+  it('routes to the last address when a prior speaker is referenced first (B-5.5 regression)', () => {
+    const turns = baseTurns();
+    // Moderator back-references Tony, then directs the steelman to Kimi.
+    turns.push(
+      turn(
+        'moderator',
+        'Moderator',
+        'moderator',
+        "Tony, you've made a moral claim about sufficiency. Kimi, give me the strongest version of Tony's side — the case that hitting the target still isn't enough.",
+      ),
+    );
+    const plan = planNextTurn(config, turns, {})!;
+    expect(plan.speakerId).toBe('a2'); // Kimi (the directive), not Tony (referenced first + possessive)
+    expect(plan.instructionOpts.moderatorDirected).toBe(true);
+  });
+
   it('falls back to rotation when the moderator names no one', () => {
     const turns = baseTurns();
     turns.push(

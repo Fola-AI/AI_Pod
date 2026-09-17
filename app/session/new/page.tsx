@@ -130,7 +130,7 @@ export default function NewSessionPage() {
   >('medium');
   const [openingBanter, setOpeningBanter] = useState(true);
   const [searchMode, setSearchMode] = useState<'none' | 'shared' | 'native'>('shared');
-  const [forceFirstSearch, setForceFirstSearch] = useState(true);
+  const [forceFirstSearch, setForceFirstSearch] = useState(false);
   const [researchPack, setResearchPack] = useState(false);
   const [saving, setSaving] = useState(false);
 

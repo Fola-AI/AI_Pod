@@ -83,6 +83,10 @@ export interface ModelEntry {
   // web search (B-5.5). Defaults to true; set false for models that can't call
   // tools, which route to the research-pack fallback instead.
   supportsFunctionCalling?: boolean;
+  // Per-model calibration for the stated word budget. Some models systematically
+  // overrun the word target; a factor < 1 tells them a lower number so actual
+  // output lands near maxWordsPerTurn. Defaults to the provider factor, else 1.
+  wordBudgetFactor?: number;
   enabled: boolean;
 }
 
@@ -196,6 +200,14 @@ export interface Claim {
   turnIndex?: number;
 }
 
+// Two or more claims that give different values for the same quantity — the most
+// dangerous thing to publish unnoticed. The checklist flags these with both (or
+// all) conflicting values and their turn indices.
+export interface ClaimConflict {
+  quantity: string; // What the values are measuring, e.g. "solar capacity added in 2024"
+  values: { value: string; speaker?: string; turnIndex?: number }[];
+}
+
 export interface Session {
   id: string;
   config: SessionConfig;
@@ -204,6 +216,7 @@ export interface Session {
   totalWords: number;
   totalCostUsd: number;
   claims?: Claim[]; // Persisted after extraction; included in the JSON export
+  claimConflicts?: ClaimConflict[]; // Conflicting values for the same quantity
   createdAt: string;
   completedAt?: string;
 }

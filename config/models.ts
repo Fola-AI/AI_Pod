@@ -291,6 +291,22 @@ export function getModel(modelId: string): ModelEntry | undefined {
   return MODELS.find((m) => m.id === modelId);
 }
 
+// Per-provider word-budget calibration (B-5.5): Anthropic models run ~2x over the
+// stated word target, so we tell them a lower number. Per-model overrides win.
+const PROVIDER_WORD_FACTOR: Partial<Record<ProviderId, number>> = {
+  anthropic: 0.55,
+};
+
+/** Calibrate a word target for the model, so actual output lands near `words`. */
+export function calibratedWordBudget(modelId: string, words: number): number {
+  const model = getModel(modelId);
+  const factor =
+    model?.wordBudgetFactor ??
+    (model ? PROVIDER_WORD_FACTOR[model.provider] : undefined) ??
+    1;
+  return Math.max(20, Math.round(words * factor));
+}
+
 // Native web search is scoped to these providers (P1-2). Every other provider is
 // force-off with a visible reason — we do not build tool-use loops for them.
 export const WEB_SEARCH_PROVIDERS = new Set<ProviderId>([

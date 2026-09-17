@@ -6,6 +6,7 @@ import { sessions, turns } from './schema';
 import type { SessionRow, TurnRow } from './schema';
 import type {
   Claim,
+  ClaimConflict,
   Session,
   SessionConfig,
   SessionStatus,
@@ -48,6 +49,7 @@ function rowToSession(s: SessionRow, ts: TurnRow[]): Session {
     totalWords: s.totalWords,
     totalCostUsd: s.totalCostUsd,
     claims: s.claims ?? undefined,
+    claimConflicts: s.claimConflicts ?? undefined,
     createdAt:
       s.createdAt instanceof Date ? s.createdAt.toISOString() : String(s.createdAt),
     completedAt: s.completedAt
@@ -176,12 +178,16 @@ export async function setSessionStatus(
   await db.update(sessions).set({ status }).where(eq(sessions.id, id));
 }
 
-/** Persist the extracted claims checklist for a session. */
+/** Persist the extracted claims checklist (and any value conflicts) for a session. */
 export async function setSessionClaims(
   id: string,
   claims: Claim[],
+  claimConflicts: ClaimConflict[] = [],
 ): Promise<void> {
-  await db.update(sessions).set({ claims }).where(eq(sessions.id, id));
+  await db
+    .update(sessions)
+    .set({ claims, claimConflicts })
+    .where(eq(sessions.id, id));
 }
 
 /** Persist voice-pass tagged text for many turns (B-1). */

@@ -23,6 +23,7 @@ import {
   runVoicePass,
   editTaggedText,
   type Claim,
+  type ClaimConflict,
   type ApiError,
   type PreflightCheck,
   type VoicePassResponse,
@@ -215,6 +216,9 @@ export function SessionView({ initial }: { initial: Session }) {
   const [claims, setClaims] = useState<Claim[] | null>(
     initial.claims ?? null,
   );
+  const [conflicts, setConflicts] = useState<ClaimConflict[]>(
+    initial.claimConflicts ?? [],
+  );
   const [claimsLoading, setClaimsLoading] = useState(false);
   const [checked, setChecked] = useState<Record<number, boolean>>({});
 
@@ -245,9 +249,16 @@ export function SessionView({ initial }: { initial: Session }) {
   async function handleExtractClaims() {
     setClaimsLoading(true);
     try {
-      const c = await extractClaims(initial.id);
+      const { claims: c, conflicts: cf } = await extractClaims(initial.id);
       setClaims(c);
-      if (c.length === 0) toast.info('No checkable claims found.');
+      setConflicts(cf);
+      if (cf.length > 0) {
+        toast.warning(
+          `${cf.length} conflicting ${cf.length === 1 ? 'value' : 'values'} found — check before publishing.`,
+        );
+      } else if (c.length === 0) {
+        toast.info('No checkable claims found.');
+      }
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -580,6 +591,32 @@ export function SessionView({ initial }: { initial: Session }) {
                   : 'Extract claims'}
             </Button>
           </div>
+          {conflicts.length > 0 && (
+            <div className="mb-3 rounded-md border border-amber-500/50 bg-amber-500/10 p-3">
+              <p className="mb-2 text-sm font-medium text-amber-700 dark:text-amber-400">
+                ⚠ {conflicts.length} conflicting{' '}
+                {conflicts.length === 1 ? 'value' : 'values'} — resolve before publishing
+              </p>
+              <ul className="space-y-2">
+                {conflicts.map((cf, i) => (
+                  <li key={i} className="text-sm">
+                    <span className="font-medium">{cf.quantity}:</span>{' '}
+                    {cf.values.map((v, j) => (
+                      <span key={j}>
+                        {j > 0 && <span className="text-amber-600"> vs </span>}
+                        {v.value}
+                        {v.turnIndex != null && (
+                          <span className="text-muted-foreground">
+                            {' '}({v.speaker ? `${v.speaker}, ` : ''}turn #{v.turnIndex})
+                          </span>
+                        )}
+                      </span>
+                    ))}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {claims && claims.length > 0 && (
             <ul className="space-y-2">
               {claims.map((c, i) => (

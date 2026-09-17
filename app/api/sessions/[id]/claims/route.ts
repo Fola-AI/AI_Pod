@@ -16,12 +16,12 @@ export async function POST(
     return NextResponse.json({ error: 'Session not found' }, { status: 404 });
   }
   if (session.turns.length === 0) {
-    return NextResponse.json({ claims: [] });
+    return NextResponse.json({ claims: [], conflicts: [] });
   }
   try {
-    const claims = await extractClaims(session);
-    await setSessionClaims(id, claims); // persisted → included in JSON export
-    return NextResponse.json({ claims });
+    const { claims, conflicts } = await extractClaims(session);
+    await setSessionClaims(id, claims, conflicts); // persisted → in JSON export
+    return NextResponse.json({ claims, conflicts });
   } catch (err) {
     if (err instanceof MissingKeyError || err instanceof ProviderError) {
       return NextResponse.json({ error: err.message }, { status: 502 });

@@ -89,21 +89,35 @@ function escapeRegex(s: string): string {
 
 /**
  * If a moderator interjection names a participant, that participant must answer
- * next — overriding rotation. Prefer a direct address (name at the start, or
- * "Name," / "Name?" / "Name:"); fall back to the first name mentioned.
+ * next — overriding rotation.
+ *
+ * Prefer a direct address (name at the start, or "Name," / "Name?" / "Name:").
+ * When several names are addressed, the LAST wins: moderators routinely
+ * reference a prior speaker before directing the next one ("Otis, you made a
+ * claim… Gretchen, steelman it"), and the operative instruction comes last.
+ * Possessive forms ("Otis's side") are objects, not addressees, and are ignored
+ * entirely. Falls back to the first plainly-mentioned name.
  */
 function findDirectedAgent(config: SessionConfig, text: string) {
-  let addressed: { agent: AgentConfig; idx: number } | null = null;
-  let mentioned: { agent: AgentConfig; idx: number } | null = null;
+  let addressed: { agent: AgentConfig; idx: number } | null = null; // last address
+  let mentioned: { agent: AgentConfig; idx: number } | null = null; // first mention
   for (const agent of config.agents) {
     const n = escapeRegex(agent.displayName);
-    const addr = text.match(new RegExp(`(^|\\n)\\s*${n}\\b|\\b${n}\\s*[,?:]`, 'i'));
-    if (addr && (addressed === null || addr.index! < addressed.idx)) {
-      addressed = { agent, idx: addr.index! };
-    }
-    const men = text.search(new RegExp(`\\b${n}\\b`, 'i'));
-    if (men >= 0 && (mentioned === null || men < mentioned.idx)) {
-      mentioned = { agent, idx: men };
+    const re = new RegExp(`\\b${n}\\b`, 'gi');
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      const idx = m.index;
+      const after = text.slice(idx + agent.displayName.length);
+      // Possessive ("Otis's" / "Otis'") — a referenced object, never the speaker.
+      if (/^['’]s?\b/.test(after)) continue;
+      const before = text.slice(0, idx);
+      const atLineStart = /(^|\n)\s*$/.test(before);
+      const addrPunct = /^\s*[,?:]/.test(after);
+      if (atLineStart || addrPunct) {
+        if (addressed === null || idx > addressed.idx) addressed = { agent, idx };
+      } else if (mentioned === null || idx < mentioned.idx) {
+        mentioned = { agent, idx };
+      }
     }
   }
   return (addressed ?? mentioned)?.agent ?? null;

@@ -13,6 +13,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import type {
   Claim,
+  ClaimConflict,
   SessionConfig,
   SessionStatus,
   TurnClass,
@@ -28,6 +29,7 @@ export const sessions = pgTable('sessions', {
   totalWords: integer('total_words').notNull().default(0),
   totalCostUsd: doublePrecision('total_cost_usd').notNull().default(0),
   claims: jsonb('claims').$type<Claim[]>(),
+  claimConflicts: jsonb('claim_conflicts').$type<ClaimConflict[]>(),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()
     .defaultNow(),

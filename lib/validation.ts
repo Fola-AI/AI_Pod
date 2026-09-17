@@ -69,7 +69,7 @@ export const createSessionSchema = z
         maxSearchesPerTurn: z.number().int().min(0).max(3).default(2),
         maxSearchesPerSession: z.number().int().min(0).max(100).default(25),
         resultsPerSearch: z.number().int().min(1).max(5).default(5),
-        forceFirstSearch: z.boolean().default(true),
+        forceFirstSearch: z.boolean().default(false),
         researchPack: z.boolean().optional(),
       })
       .default({
@@ -77,7 +77,7 @@ export const createSessionSchema = z
         maxSearchesPerTurn: 2,
         maxSearchesPerSession: 25,
         resultsPerSearch: 5,
-        forceFirstSearch: true,
+        forceFirstSearch: false,
       }),
   })
   .refine((d) => d.agents.length === d.agentCount, {

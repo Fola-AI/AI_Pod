@@ -15,6 +15,7 @@ import type {
   TurnSearch,
 } from '@/lib/types';
 import {
+  calibratedWordBudget,
   getModel,
   MODELS,
   modelSupportsFunctionCalling,
@@ -250,7 +251,7 @@ export async function executeTurn(
       const priorFullTurns = priorTurns.some(
         (t) => t.speakerId === plan.speakerId && t.turnClass === 'full',
       );
-      const forceFirstOn = config.webSearch?.forceFirstSearch !== false; // default on
+      const forceFirstOn = config.webSearch?.forceFirstSearch === true; // default off
       const budget = {
         perTurn: Math.min(3, config.webSearch?.maxSearchesPerTurn ?? 2),
         resultsPerSearch: config.webSearch?.resultsPerSearch ?? 5,
@@ -283,7 +284,7 @@ export async function executeTurn(
   // instruction. If it still doesn't land, persist it flagged.
   let wasTruncated = false;
   if (!v.valid && v.reason === 'truncated') {
-    const retryMessage = `${baseUserMessage}\n\nKeep this turn under ${plan.maxWords} words and finish your final sentence completely.`;
+    const retryMessage = `${baseUserMessage}\n\nKeep this turn under ${calibratedWordBudget(plan.modelId, plan.maxWords)} words and finish your final sentence completely.`;
     ({ result, searches, degraded } = await call(baseMaxTokens * 2, retryMessage));
     v = validateTurn(result.text, result.stopReason);
     wasTruncated = !v.valid;

@@ -16,6 +16,7 @@ import {
   isAgreementInverted,
   isStanceBearing,
 } from '@/lib/formats';
+import { calibratedWordBudget } from '@/config/models';
 
 function renderSourceMaterial(docs?: SourceDoc[]): string {
   if (!docs || docs.length === 0) return '';
@@ -140,7 +141,10 @@ Evidence
 - Prefer one concrete, checkable fact over three abstract assertions.
 
 Length and delivery
-- Aim for about ${agent.maxWordsPerTurn} words. Shorter is usually better.
+- Aim for about ${calibratedWordBudget(agent.modelId, agent.maxWordsPerTurn)} words. Shorter is usually better. Do not exceed this by much.
+- Never announce what your point is. Make it. Do not say "here is my
+  point", "the takeaway is", "what a listener should remember is" — just
+  say the thing.
 - Never break character. Never mention that you are an AI model, never
   refer to prompts, tokens, or this system.
 - Speak as if being recorded for a podcast. No markdown, no bullet

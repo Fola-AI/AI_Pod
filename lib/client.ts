@@ -1,10 +1,10 @@
 // Client-side API helpers.
 
-import type { Claim, Session, Turn } from '@/lib/types';
+import type { Claim, ClaimConflict, Session, Turn } from '@/lib/types';
 import type { SessionSummary } from '@/lib/db/queries';
 import type { ProviderId } from '@/lib/types';
 
-export type { Claim };
+export type { Claim, ClaimConflict };
 
 export interface ApiError extends Error {
   status?: number;
@@ -134,12 +134,14 @@ export async function deleteTurn(
   return jsonOrThrow(res);
 }
 
-export async function extractClaims(sessionId: string): Promise<Claim[]> {
+export async function extractClaims(
+  sessionId: string,
+): Promise<{ claims: Claim[]; conflicts: ClaimConflict[] }> {
   const res = await fetch(`/api/sessions/${sessionId}/claims`, {
     method: 'POST',
   });
   const data = await jsonOrThrow(res);
-  return data.claims;
+  return { claims: data.claims ?? [], conflicts: data.conflicts ?? [] };
 }
 
 export interface PreflightCheck {
