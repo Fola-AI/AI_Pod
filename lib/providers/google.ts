@@ -6,9 +6,26 @@ import type {
   GenerateResult,
   ProviderAdapter,
   ProviderStopReason,
+  TurnSearch,
 } from '@/lib/types';
 import { ProviderError } from './errors';
 import { postJson } from './http';
+
+// Google returns grounding as webSearchQueries (list) + groundingChunks (list of
+// {web:{uri,title}}). Sources aren't mapped per query, so we attach them all.
+function extractGoogleSearches(candidate: any): TurnSearch[] | undefined {
+  const meta = candidate?.groundingMetadata;
+  if (!meta) return undefined;
+  const queries: string[] = Array.isArray(meta.webSearchQueries)
+    ? meta.webSearchQueries
+    : [];
+  const sources = (Array.isArray(meta.groundingChunks) ? meta.groundingChunks : [])
+    .map((c: any) => c?.web)
+    .filter((w: any) => w?.uri)
+    .map((w: any) => ({ url: w.uri as string, title: w.title as string | undefined }));
+  if (queries.length === 0 && sources.length === 0) return undefined;
+  return [{ query: queries.join(' | ') || '(web search)', sources }];
+}
 
 const BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
@@ -52,6 +69,10 @@ export function createGoogleAdapter(apiKey: string): ProviderAdapter {
             temperature: params.temperature,
             maxOutputTokens: params.maxTokens,
           },
+          // Search grounding (P1-2): enable the built-in Google Search tool.
+          ...(params.webSearchMaxUses
+            ? { tools: [{ google_search: {} }] }
+            : {}),
         },
         {},
       );
@@ -81,6 +102,9 @@ export function createGoogleAdapter(apiKey: string): ProviderAdapter {
         outputTokens: json?.usageMetadata?.candidatesTokenCount ?? 0,
         latencyMs,
         rawModel: json?.modelVersion,
+        searches: params.webSearchMaxUses
+          ? extractGoogleSearches(json?.candidates?.[0])
+          : undefined,
       };
     },
   };

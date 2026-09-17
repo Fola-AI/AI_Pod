@@ -13,6 +13,11 @@ import type {
 import { ProviderError } from './errors';
 import { postJson } from './http';
 
+// NOTE: web search is NOT handled here. OpenAI's web search lives only on the
+// Responses API (see openai-responses.ts); the OpenAI-compatible providers that
+// share this base (xAI, DeepSeek, Groq, Mistral, Alibaba, Meta) have no Chat
+// Completions web search, so this adapter deliberately stays search-free.
+
 function mapOpenAIStop(reason: string): ProviderStopReason {
   switch (reason) {
     case 'stop':
@@ -75,13 +80,15 @@ export function createOpenAICompatibleAdapter(
       // instead of `max_tokens`. Retry with the offending parameter adjusted.
       let useTemperature = true;
       let tokenParam: 'max_tokens' | 'max_completion_tokens' = 'max_tokens';
+      const makeBody = () => ({
+        model: params.apiModelString,
+        messages,
+        [tokenParam]: params.maxTokens,
+        ...(useTemperature ? { temperature: params.temperature } : {}),
+      });
       const start = Date.now();
-      let res = await postJson(
-        url,
-        { model: params.apiModelString, messages, [tokenParam]: params.maxTokens, temperature: params.temperature },
-        headers,
-      );
-      for (let i = 0; i < 2 && !res.ok && res.status === 400; i++) {
+      let res = await postJson(url, makeBody(), headers);
+      for (let i = 0; i < 3 && !res.ok && res.status === 400; i++) {
         const msg = res.json?.error?.message ?? res.text ?? '';
         if (useTemperature && /temperature/i.test(msg)) {
           useTemperature = false;
@@ -93,16 +100,7 @@ export function createOpenAICompatibleAdapter(
         } else {
           break; // not a recoverable parameter error
         }
-        res = await postJson(
-          url,
-          {
-            model: params.apiModelString,
-            messages,
-            [tokenParam]: params.maxTokens,
-            ...(useTemperature ? { temperature: params.temperature } : {}),
-          },
-          headers,
-        );
+        res = await postJson(url, makeBody(), headers);
       }
       const { ok, status, json, text } = res;
       const latencyMs = Date.now() - start;

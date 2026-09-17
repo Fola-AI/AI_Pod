@@ -6,9 +6,34 @@ import type {
   GenerateResult,
   ProviderAdapter,
   ProviderStopReason,
+  TurnSearch,
 } from '@/lib/types';
 import { ProviderError } from './errors';
 import { postJson } from './http';
+
+// Pair each web_search query (server_tool_use) with its results
+// (web_search_tool_result) by tool_use_id. Errors come back as an object, not a
+// list — skip those (P1-2 note: server-tool errors are HTTP 200).
+function extractAnthropicSearches(content: any[]): TurnSearch[] {
+  if (!Array.isArray(content)) return [];
+  const queries = new Map<string, string>();
+  for (const b of content) {
+    if (b?.type === 'server_tool_use' && b?.name === 'web_search') {
+      queries.set(b.id, b.input?.query ?? '');
+    }
+  }
+  const searches: TurnSearch[] = [];
+  for (const b of content) {
+    if (b?.type === 'web_search_tool_result') {
+      const results = Array.isArray(b.content) ? b.content : [];
+      const sources = results
+        .filter((r: any) => r?.type === 'web_search_result' && r?.url)
+        .map((r: any) => ({ url: r.url as string, title: r.title as string | undefined }));
+      searches.push({ query: queries.get(b.tool_use_id) ?? '', sources });
+    }
+  }
+  return searches;
+}
 
 const API_URL = 'https://api.anthropic.com/v1/messages';
 const API_VERSION = '2023-06-01';
@@ -35,7 +60,7 @@ export function createAnthropicAdapter(apiKey: string): ProviderAdapter {
         'x-api-key': apiKey,
         'anthropic-version': API_VERSION,
       };
-      const baseBody = {
+      const baseBody: Record<string, unknown> = {
         model: params.apiModelString,
         system: params.systemPrompt || undefined,
         messages: params.messages.map((m) => ({
@@ -44,6 +69,15 @@ export function createAnthropicAdapter(apiKey: string): ProviderAdapter {
         })),
         max_tokens: params.maxTokens,
       };
+      if (params.webSearchMaxUses && params.webSearchMaxUses > 0) {
+        baseBody.tools = [
+          {
+            type: 'web_search_20250305',
+            name: 'web_search',
+            max_uses: params.webSearchMaxUses,
+          },
+        ];
+      }
 
       const start = Date.now();
       let res = await postJson(
@@ -81,6 +115,10 @@ export function createAnthropicAdapter(apiKey: string): ProviderAdapter {
         : '';
       const rawStopReason: string = json?.stop_reason ?? '';
 
+      const searches = params.webSearchMaxUses
+        ? extractAnthropicSearches(json?.content)
+        : undefined;
+
       return {
         text: outText.trim(),
         stopReason: mapAnthropicStop(rawStopReason),
@@ -89,6 +127,7 @@ export function createAnthropicAdapter(apiKey: string): ProviderAdapter {
         outputTokens: json?.usage?.output_tokens ?? 0,
         latencyMs,
         rawModel: json?.model,
+        searches: searches && searches.length ? searches : undefined,
       };
     },
   };

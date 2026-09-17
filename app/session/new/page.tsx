@@ -25,7 +25,7 @@ import {
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { MODELS, PROVIDER_LABEL } from '@/config/models';
+import { MODELS, PROVIDER_LABEL, modelSearchSupport } from '@/config/models';
 import { BUILT_IN_PERSONAS } from '@/lib/personas';
 import { FORMAT_LIST, FORMATS, isStanceBearing } from '@/lib/formats';
 import type { ProviderId, SessionFormat, SessionConfig } from '@/lib/types';
@@ -43,6 +43,7 @@ interface AgentDraft {
   maxWordsPerTurn: number;
   referenceImage: string;
   voiceId: string;
+  webSearchEnabled: boolean;
 }
 
 const NAME_POOL = ['Lara', 'Tony', 'Kimi', 'Ada', 'Zoe', 'Ravi'];
@@ -67,6 +68,7 @@ function makeAgent(i: number): AgentDraft {
     maxWordsPerTurn: 160,
     referenceImage: '',
     voiceId: '',
+    webSearchEnabled: true,
   };
 }
 
@@ -98,6 +100,7 @@ export default function NewSessionPage() {
     'off' | 'low' | 'medium' | 'high'
   >('medium');
   const [openingBanter, setOpeningBanter] = useState(true);
+  const [webSearchEnabled, setWebSearchEnabled] = useState(true);
   const [saving, setSaving] = useState(false);
 
   type ProviderStatus = Awaited<ReturnType<typeof fetchProviders>>;
@@ -275,6 +278,7 @@ export default function NewSessionPage() {
           maxWordsPerTurn: a.maxWordsPerTurn,
           referenceImage: a.referenceImage.trim() || undefined,
           voiceId: a.voiceId.trim() || undefined,
+          webSearchEnabled: a.webSearchEnabled,
         })),
         moderator: {
           displayName: modName.trim() || 'Moderator',
@@ -288,6 +292,11 @@ export default function NewSessionPage() {
         budgetCapUsd: budgetCap.trim() ? Number(budgetCap) : undefined,
         interjectionRate,
         openingBanter,
+        webSearch: {
+          enabled: webSearchEnabled,
+          maxSearchesPerTurn: 2,
+          maxSearchesPerSession: 20,
+        },
       });
       toast.success('Session created');
       router.push(`/session/${session.id}`);
@@ -574,6 +583,30 @@ export default function NewSessionPage() {
                       }
                     />
                   </div>
+                  <div className="space-y-1.5 col-span-2">
+                    <Label className="text-xs">Web search</Label>
+                    {modelSearchSupport(a.modelId).supported ? (
+                      <label className="flex items-center gap-2 h-8 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={a.webSearchEnabled}
+                          disabled={!webSearchEnabled}
+                          onChange={(e) =>
+                            updateAgent(a.id, {
+                              webSearchEnabled: e.target.checked,
+                            })
+                          }
+                        />
+                        {webSearchEnabled
+                          ? 'Searches the web when it needs a current fact'
+                          : 'Turn on session web search above to enable'}
+                      </label>
+                    ) : (
+                      <p className="h-8 flex items-center text-xs text-muted-foreground">
+                        Off — {modelSearchSupport(a.modelId).reason}
+                      </p>
+                    )}
+                  </div>
                 </div>
               </details>
               <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -782,6 +815,20 @@ export default function NewSessionPage() {
               />
               Light chat before the topic
             </label>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Web search grounding</Label>
+            <label className="flex items-center gap-2 h-8 text-sm">
+              <input
+                type="checkbox"
+                checked={webSearchEnabled}
+                onChange={(e) => setWebSearchEnabled(e.target.checked)}
+              />
+              Let agents search the web
+            </label>
+            <p className="text-[10px] text-muted-foreground">
+              Anthropic, OpenAI, Google only. Others are off automatically.
+            </p>
           </div>
         </CardContent>
       </Card>

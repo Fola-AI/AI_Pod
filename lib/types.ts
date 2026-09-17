@@ -26,6 +26,19 @@ export type SessionFormat =
 
 export type InterjectionRate = 'off' | 'low' | 'medium' | 'high';
 
+// Web search grounding (P1-2). Only Anthropic, OpenAI, and Google have native
+// search; every other provider is forced off with a visible reason.
+export interface WebSearchConfig {
+  enabled: boolean; // Session master switch, default true
+  maxSearchesPerTurn: number; // Default 2, hard cap 3
+  maxSearchesPerSession: number; // Default 20
+}
+
+export interface TurnSearch {
+  query: string;
+  sources: { url: string; title?: string }[];
+}
+
 export type ModelTier = 'frontier' | 'mid' | 'fast';
 
 export interface ModelEntry {
@@ -60,6 +73,7 @@ export interface AgentConfig {
   maxWordsPerTurn: number; // Default 160
   referenceImage?: string; // Optional filename/URL, carried to the manifest
   voiceId?: string; // Optional ElevenLabs voice id (B-4)
+  webSearchEnabled?: boolean; // Per-agent search, default true where supported (P1-2)
 }
 
 export type InterjectionFrequency = 'low' | 'medium' | 'high';
@@ -93,6 +107,7 @@ export interface SessionConfig {
   budgetCapUsd?: number; // Optional. Jump to closings once actual cost exceeds it
   interjectionRate?: InterjectionRate; // Agent reaction interjections. Default 'medium'
   openingBanter?: boolean; // Light chat before the topic. Default true
+  webSearch?: WebSearchConfig; // Web search grounding (P1-2)
   createdAt: string;
 }
 
@@ -123,6 +138,7 @@ export interface Turn {
   turnClass: TurnClass; // 'full' | 'interjection'
   text: string;
   taggedText?: string; // Voice-pass output with ElevenLabs tags (B-1); never overwrites text
+  searches?: TurnSearch[]; // Web searches this turn issued (P1-2); never in spoken exports
   modelId: string; // Which model actually produced this
   personaId?: string;
   inputTokens: number;
@@ -171,6 +187,8 @@ export interface GenerateParams {
   messages: ChatMessage[];
   temperature: number;
   maxTokens: number;
+  // When set, enable the provider's native web search with this many max uses.
+  webSearchMaxUses?: number;
 }
 
 // Normalised finish reason across providers.
@@ -184,6 +202,7 @@ export interface GenerateResult {
   outputTokens: number;
   latencyMs: number;
   rawModel?: string; // Model string the provider reports having used
+  searches?: TurnSearch[]; // Native web searches the model issued this call
 }
 
 // Alias requested in the P0 brief; same shape as GenerateResult.

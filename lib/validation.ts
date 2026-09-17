@@ -19,6 +19,7 @@ const agentSchema = z.object({
   maxWordsPerTurn: z.number().int().min(40).max(600).default(160),
   referenceImage: z.string().optional(),
   voiceId: z.string().optional(),
+  webSearchEnabled: z.boolean().optional(),
 });
 
 const moderatorSchema = z.object({
@@ -62,6 +63,13 @@ export const createSessionSchema = z
       .enum(['off', 'low', 'medium', 'high'])
       .default('medium'),
     openingBanter: z.boolean().default(true),
+    webSearch: z
+      .object({
+        enabled: z.boolean().default(true),
+        maxSearchesPerTurn: z.number().int().min(0).max(3).default(2),
+        maxSearchesPerSession: z.number().int().min(0).max(100).default(20),
+      })
+      .default({ enabled: true, maxSearchesPerTurn: 2, maxSearchesPerSession: 20 }),
   })
   .refine((d) => d.agents.length === d.agentCount, {
     message: 'agents length must equal agentCount',
@@ -101,6 +109,7 @@ export function toSessionConfig(input: CreateSessionInput): SessionConfig {
     budgetCapUsd: input.budgetCapUsd,
     interjectionRate: input.interjectionRate,
     openingBanter: input.openingBanter,
+    webSearch: input.webSearch,
     createdAt: new Date().toISOString(),
   };
 }

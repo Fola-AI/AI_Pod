@@ -290,3 +290,31 @@ export const MODELS: ModelEntry[] = [
 export function getModel(modelId: string): ModelEntry | undefined {
   return MODELS.find((m) => m.id === modelId);
 }
+
+// Native web search is scoped to these providers (P1-2). Every other provider is
+// force-off with a visible reason — we do not build tool-use loops for them.
+export const WEB_SEARCH_PROVIDERS = new Set<ProviderId>([
+  'anthropic',
+  'openai',
+  'google',
+]);
+
+export function providerSupportsWebSearch(provider: ProviderId): boolean {
+  return WEB_SEARCH_PROVIDERS.has(provider);
+}
+
+/** Whether a given model can use web search, and why not if it can't. */
+export function modelSearchSupport(modelId: string): {
+  supported: boolean;
+  reason?: string;
+} {
+  const model = getModel(modelId);
+  if (!model) return { supported: false, reason: 'unknown model' };
+  if (!providerSupportsWebSearch(model.provider)) {
+    return {
+      supported: false,
+      reason: `${PROVIDER_LABEL[model.provider]} has no native web search`,
+    };
+  }
+  return { supported: true };
+}

@@ -62,6 +62,7 @@ export async function POST(
       latencyMs: executed.latencyMs,
       wasTruncated: executed.wasTruncated,
       modelId: executed.modelId,
+      searches: executed.searches,
     });
     await markTurnsStaleAfter(id, idx);
     const totals = await recomputeAggregates(id);

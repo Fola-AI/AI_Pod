@@ -9,12 +9,14 @@ import { MissingKeyError, ProviderError } from './errors';
 import { createAnthropicAdapter } from './anthropic';
 import { createGoogleAdapter } from './google';
 import { createOpenAICompatibleAdapter } from './base-openai';
+import { createOpenAIResponsesAdapter } from './openai-responses';
 
 type AdapterFactory = (apiKey: string) => ProviderAdapter;
 
-// OpenAI-compatible providers: base URL is the only real difference.
+// OpenAI-compatible providers that share the Chat Completions base. OpenAI is
+// NOT here — it uses its own Responses-API adapter (openai-responses.ts) so it
+// can do web search; these providers only differ from each other by base URL.
 const OPENAI_COMPATIBLE_BASE_URLS: Partial<Record<ProviderId, string>> = {
-  openai: 'https://api.openai.com/v1',
   xai: 'https://api.x.ai/v1',
   deepseek: 'https://api.deepseek.com',
   mistral: 'https://api.mistral.ai/v1',
@@ -34,7 +36,7 @@ function openAICompatFactory(id: ProviderId): AdapterFactory {
 const ADAPTER_FACTORIES: Partial<Record<ProviderId, AdapterFactory>> = {
   anthropic: (key) => createAnthropicAdapter(key),
   google: (key) => createGoogleAdapter(key),
-  openai: openAICompatFactory('openai'),
+  openai: (key) => createOpenAIResponsesAdapter(key),
   xai: openAICompatFactory('xai'),
   deepseek: openAICompatFactory('deepseek'),
   mistral: openAICompatFactory('mistral'),

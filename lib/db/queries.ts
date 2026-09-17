@@ -10,6 +10,7 @@ import type {
   SessionConfig,
   SessionStatus,
   Turn,
+  TurnSearch,
 } from '@/lib/types';
 import { countWords } from '@/lib/cost';
 
@@ -22,6 +23,7 @@ function rowToTurn(r: TurnRow): Turn {
     turnClass: r.turnClass,
     text: r.text,
     taggedText: r.taggedText ?? undefined,
+    searches: r.searches ?? undefined,
     modelId: r.modelId,
     personaId: r.personaId ?? undefined,
     inputTokens: r.inputTokens,
@@ -137,6 +139,7 @@ export async function appendTurn(
       turnType: turn.turnType,
       turnClass: turn.turnClass,
       text: turn.text,
+      searches: turn.searches,
       modelId: turn.modelId,
       personaId: turn.personaId,
       inputTokens: turn.inputTokens,
@@ -239,12 +242,14 @@ export async function replaceTurn(
     latencyMs: number;
     wasTruncated?: boolean;
     modelId?: string;
+    searches?: TurnSearch[];
   },
 ): Promise<void> {
   await db
     .update(turns)
     .set({
       ...fields,
+      searches: fields.searches ?? null,
       wasTruncated: fields.wasTruncated ?? false,
       wasEdited: false,
       isStale: false,

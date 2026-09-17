@@ -352,6 +352,10 @@ export function SessionView({ initial }: { initial: Session }) {
     else doSpokenExport(fmt);
   }
 
+  const totalSearches = turns.reduce(
+    (n, t) => n + (t.searches?.length ?? 0),
+    0,
+  );
   const formatLabel = FORMATS[config.format]?.label ?? config.format;
   const targetPct = Math.min(
     100,
@@ -412,6 +416,11 @@ export function SessionView({ initial }: { initial: Session }) {
             {totalWords.toLocaleString()} / {config.targetWordCount.toLocaleString()} words ({targetPct}%)
           </span>
           <span>{formatUsd(totalCostUsd)}</span>
+          {totalSearches > 0 && (
+            <span title="Web searches (billed separately from tokens)">
+              🔎 {totalSearches}
+            </span>
+          )}
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
@@ -958,6 +967,39 @@ function TurnBlock({
         >
           {displayText}
         </p>
+      )}
+
+      {turn.searches && turn.searches.length > 0 && (
+        <details className="mt-2 text-xs">
+          <summary className="cursor-pointer text-muted-foreground">
+            🔎 {turn.searches.length} web search
+            {turn.searches.length > 1 ? 'es' : ''} ·{' '}
+            {turn.searches.reduce((n, s) => n + s.sources.length, 0)} sources
+          </summary>
+          <div className="mt-1 space-y-2 border-l pl-3">
+            {turn.searches.map((s, i) => (
+              <div key={i}>
+                <p className="text-muted-foreground">
+                  <span className="font-medium">Query:</span> {s.query}
+                </p>
+                <ul className="mt-0.5 space-y-0.5">
+                  {s.sources.map((src, j) => (
+                    <li key={j}>
+                      <a
+                        href={src.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline break-all"
+                      >
+                        {src.title || src.url}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </details>
       )}
     </div>
   );

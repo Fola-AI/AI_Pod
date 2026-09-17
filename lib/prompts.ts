@@ -31,7 +31,7 @@ function renderSourceMaterial(docs?: SourceDoc[]): string {
 export function buildAgentSystemPrompt(
   config: SessionConfig,
   agent: AgentConfig,
-  opts: { holdsSeat?: boolean } = {},
+  opts: { holdsSeat?: boolean; webSearch?: boolean } = {},
 ): string {
   const persona = getPersona(agent.personaId);
   const framing = getFormatFraming(config.format);
@@ -62,6 +62,13 @@ export function buildAgentSystemPrompt(
   if (source) {
     parts.push(
       `SOURCE MATERIAL\nThe following has been provided to all participants. Ground your arguments in it where relevant. Distinguish clearly between what these sources state and what you are inferring.\n\n${source}`,
+    );
+  }
+
+  if (opts.webSearch) {
+    parts.push(
+      `WEB SEARCH
+You can search the web when you genuinely need a current fact or a specific figure — don't search for things you already know. When you use something you found, say where it came from, in speech: "Reuters reported last month that…", "the World Bank's latest figure is about…". Never read out a URL, never use bracketed references, footnote markers, or link text — this is spoken audio.`,
     );
   }
 

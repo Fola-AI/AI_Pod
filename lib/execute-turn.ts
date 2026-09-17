@@ -12,8 +12,9 @@ import type {
   SessionConfig,
   Turn,
 } from '@/lib/types';
-import { getModel, MODELS } from '@/config/models';
+import { getModel, MODELS, providerSupportsWebSearch } from '@/config/models';
 import { getAdapter, withRetry } from '@/lib/providers';
+import type { ProviderId } from '@/lib/types';
 import { EmptyContentError } from '@/lib/providers/errors';
 import {
   buildAgentSystemPrompt,
@@ -25,6 +26,29 @@ import type { TurnPlan } from '@/lib/orchestrator';
 import { MODERATOR_ID } from '@/lib/orchestrator';
 import { countWords, turnCostUsd } from '@/lib/cost';
 import { validateTurn } from '@/lib/turn-validation';
+
+/** Search uses to grant this turn, or undefined to disable search (P1-2). */
+function computeWebSearchMaxUses(
+  config: SessionConfig,
+  plan: TurnPlan,
+  priorTurns: Turn[],
+  isModerator: boolean,
+  provider: ProviderId,
+): number | undefined {
+  const cfg = config.webSearch;
+  const sessionOn = cfg?.enabled !== false; // default true
+  const agentOn = plan.agent ? plan.agent.webSearchEnabled !== false : false;
+  const substantive = !isModerator && plan.turnClass === 'full';
+  if (!sessionOn || !agentOn || !substantive || !providerSupportsWebSearch(provider)) {
+    return undefined;
+  }
+  const perTurn = Math.min(3, cfg?.maxSearchesPerTurn ?? 2);
+  const perSession = cfg?.maxSearchesPerSession ?? 20;
+  const used = priorTurns.reduce((n, t) => n + (t.searches?.length ?? 0), 0);
+  const remaining = perSession - used;
+  if (remaining <= 0) return undefined;
+  return Math.max(1, Math.min(perTurn, remaining));
+}
 
 /** Generous, word-budget-independent token ceiling (P0-1 §2). */
 function maxTokensFor(plan: TurnPlan): number {
@@ -61,10 +85,22 @@ export async function executeTurn(
   const adapter = overrideAdapter ?? getAdapter(model.provider);
 
   const isModerator = plan.speakerId === MODERATOR_ID;
+
+  // Web search (P1-2): only supported providers, only substantive agent turns,
+  // within the per-turn and per-session caps.
+  const webSearchMaxUses = computeWebSearchMaxUses(
+    config,
+    plan,
+    priorTurns,
+    isModerator,
+    model.provider,
+  );
+
   const systemPrompt = isModerator
     ? buildModeratorSystemPrompt(config)
     : buildAgentSystemPrompt(config, plan.agent!, {
         holdsSeat: plan.holdsSeat,
+        webSearch: webSearchMaxUses !== undefined,
       });
 
   const buildTurn = (
@@ -76,6 +112,7 @@ export async function executeTurn(
     turnType: plan.turnType,
     turnClass: plan.turnClass,
     text: result.text,
+    searches: result.searches,
     modelId: resolveModelId(plan.modelId, result.rawModel),
     personaId: plan.personaId,
     inputTokens: result.inputTokens,
@@ -142,6 +179,7 @@ export async function executeTurn(
         messages: [{ role: 'user', content: userMessage }],
         temperature: plan.temperature,
         maxTokens,
+        webSearchMaxUses,
       }),
     );
 
