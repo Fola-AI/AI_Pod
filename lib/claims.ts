@@ -49,6 +49,8 @@ Use empty arrays where there is nothing to report.`;
 function renderIndexedTranscript(session: Session): string {
   if (session.turns.length === 0) return '(No turns.)';
   return session.turns
+    // Banter is small talk before the topic — no checkable claims live there.
+    .filter((t) => t.turnType !== 'banter' && t.turnType !== 'moderator-banter')
     .map((t) => {
       let block = `[Turn ${t.index}] ${t.speakerDisplayName}: ${t.text}`;
       const snippets = (t.searches ?? [])
@@ -99,6 +101,42 @@ function mapConflict(c: any): ClaimConflict | null {
   return { quantity: c.quantity ? String(c.quantity) : '(unspecified quantity)', values };
 }
 
+// Scan out every top-level {...} object from a string, respecting quotes and
+// escapes. Tolerant of a truncated tail (an unclosed final object is dropped),
+// so we can salvage claims from output that hit the token cap.
+function scanObjects(s: string): any[] {
+  const out: any[] = [];
+  let depth = 0;
+  let start = -1;
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === '{') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === '}') {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        try {
+          out.push(JSON.parse(s.slice(start, i + 1)));
+        } catch {
+          /* skip a malformed object */
+        }
+        start = -1;
+      }
+    }
+  }
+  return out;
+}
+
 export function parseExtraction(text: string): {
   claims: Claim[];
   conflicts: ClaimConflict[];
@@ -106,27 +144,46 @@ export function parseExtraction(text: string): {
   let t = text.trim();
   // Strip code fences if the model added them despite instructions.
   t = t.replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
-  // Prefer a JSON object { claims, conflicts }; tolerate a bare claims array.
   const objStart = t.indexOf('{');
   const arrStart = t.indexOf('[');
   const useObject = objStart !== -1 && (arrStart === -1 || objStart < arrStart);
+
+  // Fast path: parse the whole structure when it's well-formed.
   try {
     if (useObject) {
       const obj = JSON.parse(t.slice(objStart, t.lastIndexOf('}') + 1));
-      const claims = Array.isArray(obj?.claims)
-        ? (obj.claims.map(mapClaim).filter(Boolean) as Claim[])
-        : [];
-      const conflicts = Array.isArray(obj?.conflicts)
-        ? (obj.conflicts.map(mapConflict).filter(Boolean) as ClaimConflict[])
-        : [];
-      return { claims, conflicts };
+      if (Array.isArray(obj?.claims)) {
+        return {
+          claims: obj.claims.map(mapClaim).filter(Boolean) as Claim[],
+          conflicts: Array.isArray(obj?.conflicts)
+            ? (obj.conflicts.map(mapConflict).filter(Boolean) as ClaimConflict[])
+            : [],
+        };
+      }
+    } else if (arrStart !== -1) {
+      const arr = JSON.parse(t.slice(arrStart, t.lastIndexOf(']') + 1));
+      if (Array.isArray(arr)) {
+        return { claims: arr.map(mapClaim).filter(Boolean) as Claim[], conflicts: [] };
+      }
     }
-    const arr = JSON.parse(t.slice(arrStart, t.lastIndexOf(']') + 1));
-    const claims = Array.isArray(arr) ? (arr.map(mapClaim).filter(Boolean) as Claim[]) : [];
-    return { claims, conflicts: [] };
   } catch {
-    return { claims: [], conflicts: [] };
+    /* fall through to salvage */
   }
+
+  // Salvage path (e.g. output truncated at the token cap): pull complete objects
+  // from the claims section and the conflicts section separately.
+  const claimsKey = t.search(/"claims"\s*:\s*\[/);
+  const conflictsKey = t.search(/"conflicts"\s*:\s*\[/);
+  const claimsRegion =
+    claimsKey === -1
+      ? t
+      : t.slice(claimsKey, conflictsKey > claimsKey ? conflictsKey : undefined);
+  const conflictsRegion = conflictsKey === -1 ? '' : t.slice(conflictsKey);
+  const claims = scanObjects(claimsRegion).map(mapClaim).filter(Boolean) as Claim[];
+  const conflicts = scanObjects(conflictsRegion)
+    .map(mapConflict)
+    .filter(Boolean) as ClaimConflict[];
+  return { claims, conflicts };
 }
 
 export async function extractClaims(
@@ -151,7 +208,7 @@ export async function extractClaims(
         },
       ],
       temperature: 0,
-      maxTokens: 2500,
+      maxTokens: 6000,
     }),
   );
 

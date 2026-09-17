@@ -47,6 +47,17 @@ describe('parseExtraction', () => {
     expect(parseExtraction(text).conflicts).toEqual([]);
   });
 
+  it('salvages complete claims from output truncated at the token cap', () => {
+    // Array never closes; last object is cut off mid-string.
+    const truncated =
+      '{"claims":[{"type":"statistic","claim":"452 GW in 2024","speaker":"Sol","turnIndex":1},' +
+      '{"type":"date","claim":"2025","speaker":"Deepa","turnIndex":3},' +
+      '{"type":"statistic","claim":"this one is cut off mid str';
+    const { claims } = parseExtraction(truncated);
+    expect(claims).toHaveLength(2); // two complete objects recovered, partial dropped
+    expect(claims[1].turnIndex).toBe(3);
+  });
+
   it('returns empty on garbage', () => {
     expect(parseExtraction('not json')).toEqual({ claims: [], conflicts: [] });
   });
