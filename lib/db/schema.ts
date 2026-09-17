@@ -49,6 +49,7 @@ export const turns = pgTable(
       .notNull()
       .default('full'),
     text: text('text').notNull(),
+    taggedText: text('tagged_text'),
     modelId: text('model_id').notNull(),
     personaId: text('persona_id'),
     inputTokens: integer('input_tokens').notNull().default(0),

@@ -21,6 +21,7 @@ function rowToTurn(r: TurnRow): Turn {
     turnType: r.turnType,
     turnClass: r.turnClass,
     text: r.text,
+    taggedText: r.taggedText ?? undefined,
     modelId: r.modelId,
     personaId: r.personaId ?? undefined,
     inputTokens: r.inputTokens,
@@ -176,6 +177,31 @@ export async function setSessionClaims(
   claims: Claim[],
 ): Promise<void> {
   await db.update(sessions).set({ claims }).where(eq(sessions.id, id));
+}
+
+/** Persist voice-pass tagged text for many turns (B-1). */
+export async function setTaggedTexts(
+  sessionId: string,
+  entries: { index: number; taggedText: string | null }[],
+): Promise<void> {
+  for (const e of entries) {
+    await db
+      .update(turns)
+      .set({ taggedText: e.taggedText })
+      .where(and(eq(turns.sessionId, sessionId), eq(turns.index, e.index)));
+  }
+}
+
+/** Hand-edit a single turn's tagged text. */
+export async function updateTurnTaggedText(
+  sessionId: string,
+  index: number,
+  taggedText: string,
+): Promise<void> {
+  await db
+    .update(turns)
+    .set({ taggedText })
+    .where(and(eq(turns.sessionId, sessionId), eq(turns.index, index)));
 }
 
 /** Replace a session's config (mid-session substitute-model / remove-agent). */

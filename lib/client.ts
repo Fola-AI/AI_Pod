@@ -158,6 +158,35 @@ export async function preflight(
   return jsonOrThrow(res);
 }
 
+export interface VoicePassResponse {
+  verified: number;
+  failed: number;
+  tagCount: number;
+  wordCount: number;
+  tagsPerWords: number;
+  turns: Turn[];
+}
+
+export async function runVoicePass(sessionId: string): Promise<VoicePassResponse> {
+  const res = await fetch(`/api/sessions/${sessionId}/voice-pass`, {
+    method: 'POST',
+  });
+  return jsonOrThrow(res);
+}
+
+export async function editTaggedText(
+  sessionId: string,
+  index: number,
+  taggedText: string,
+): Promise<void> {
+  const res = await fetch(`/api/sessions/${sessionId}/turns/${index}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ taggedText }),
+  });
+  await jsonOrThrow(res);
+}
+
 export async function substituteAgentModel(
   sessionId: string,
   agentId: string,

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   getSession,
   updateTurnText,
+  updateTurnTaggedText,
   deleteTurnAndRenumber,
   markTurnsStaleAfter,
   recomputeAggregates,
@@ -10,9 +11,12 @@ import {
 
 export const runtime = 'nodejs';
 
-const patchSchema = z.object({ text: z.string().min(1) });
+const patchSchema = z.union([
+  z.object({ text: z.string().min(1) }),
+  z.object({ taggedText: z.string() }),
+]);
 
-// Inline edit of a turn's text.
+// Inline edit of a turn's spoken text, or a hand-edit of its voice-pass tags.
 export async function PATCH(
   request: Request,
   ctx: { params: Promise<{ id: string; index: string }> },
@@ -27,9 +31,13 @@ export async function PATCH(
   }
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: 'text required' }, { status: 400 });
+    return NextResponse.json({ error: 'text or taggedText required' }, { status: 400 });
   }
   try {
+    if ('taggedText' in parsed.data) {
+      await updateTurnTaggedText(id, idx, parsed.data.taggedText);
+      return NextResponse.json({ ok: true });
+    }
     await updateTurnText(id, idx, parsed.data.text);
     await markTurnsStaleAfter(id, idx);
     const totals = await recomputeAggregates(id);

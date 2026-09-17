@@ -57,6 +57,39 @@ export function toJson(session: Session): string {
   return JSON.stringify(session, null, 2);
 }
 
+/**
+ * ElevenLabs script export (B-4). An ordered array shaped for the Create /
+ * Stream dialogue endpoints: one entry per turn with speaker, voiceId, and the
+ * tagged text (falling back to plain text where no voice pass ran). Voice ids
+ * come from each speaker's config.
+ */
+export function toElevenLabsScript(session: Session): string {
+  const { config } = session;
+  const voiceFor = (speakerId: string): string | undefined => {
+    if (speakerId === 'moderator') return config.moderator.voiceId;
+    return config.agents.find((a) => a.id === speakerId)?.voiceId;
+  };
+
+  const dialogue = session.turns.map((t) => ({
+    speaker: t.speakerDisplayName,
+    voiceId: voiceFor(t.speakerId) ?? null,
+    text: t.taggedText ?? t.text,
+  }));
+
+  return JSON.stringify(
+    {
+      title: config.title,
+      // v3 audio tags only register on Creative or Natural stability. Robust
+      // ignores directional prompts. Do not use SSML <break> tags (unsupported).
+      stability: 'Creative or Natural (Robust ignores tags)',
+      note: 'Audio tags register only at Creative/Natural stability. No SSML break tags — v3 does not support them.',
+      dialogue,
+    },
+    null,
+    2,
+  );
+}
+
 /** Speaker manifest (PRD §11.4) — Phase 3, but cheap and useful now. */
 export function toSpeakerManifest(session: Session): string {
   const { config } = session;

@@ -20,9 +20,12 @@ import {
   preflight,
   substituteAgentModel,
   removeAgent,
+  runVoicePass,
+  editTaggedText,
   type Claim,
   type ApiError,
   type PreflightCheck,
+  type VoicePassResponse,
 } from '@/lib/client';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -44,7 +47,12 @@ import { formatUsd } from '@/lib/cost';
 import { FORMATS } from '@/lib/formats';
 import { getPersona } from '@/lib/personas';
 import { getModel, MODELS } from '@/config/models';
-import { toJson, toMarkdown, toSpeakerManifest } from '@/lib/export';
+import {
+  toJson,
+  toMarkdown,
+  toSpeakerManifest,
+  toElevenLabsScript,
+} from '@/lib/export';
 import { MODERATOR_ID } from '@/lib/orchestrator';
 
 function download(filename: string, content: string, type = 'text/plain') {
@@ -247,6 +255,41 @@ export function SessionView({ initial }: { initial: Session }) {
     }
   }
 
+  // --- Voice pass (Batch 4) ---
+  const [voicePass, setVoicePass] = useState<VoicePassResponse | null>(null);
+  const [voicePassLoading, setVoicePassLoading] = useState(false);
+  const [showTags, setShowTags] = useState(false);
+  const hasTags = turns.some((t) => t.taggedText);
+
+  async function handleVoicePass() {
+    setVoicePassLoading(true);
+    try {
+      const res = await runVoicePass(initial.id);
+      setTurns(res.turns);
+      setVoicePass(res);
+      setShowTags(true);
+      toast.success(
+        `Voice pass done — ${res.verified}/${res.verified + res.failed} turns verified.`,
+      );
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setVoicePassLoading(false);
+    }
+  }
+
+  async function handleEditTags(index: number, taggedText: string) {
+    try {
+      await editTaggedText(initial.id, index, taggedText);
+      setTurns((prev) =>
+        prev.map((t) => (t.index === index ? { ...t, taggedText } : t)),
+      );
+      toast.success(`Saved tags for turn ${index}.`);
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  }
+
   // --- Fatal-error recovery (P0-2 §4) ---
   async function substituteAndContinue() {
     if (!fatal?.agentId || !subModelId) return;
@@ -400,6 +443,17 @@ export function SessionView({ initial }: { initial: Session }) {
                 PDF
               </DropdownMenuItem>
               <DropdownMenuItem
+                onClick={() =>
+                  download(
+                    `${slug(config.title)}-elevenlabs.json`,
+                    toElevenLabsScript(sessionObj),
+                    'application/json',
+                  )
+                }
+              >
+                ElevenLabs script
+              </DropdownMenuItem>
+              <DropdownMenuItem
                 onClick={() => {
                   navigator.clipboard.writeText(toSpeakerManifest(sessionObj));
                   toast.success('Speaker manifest copied');
@@ -432,14 +486,66 @@ export function SessionView({ initial }: { initial: Session }) {
             turn={t}
             editable={canEdit}
             busy={busyIndex === t.index}
+            showTags={showTags}
             onRegenerate={() => handleRegenerate(t.index)}
             onDelete={() => handleDelete(t.index)}
             onEdit={(text) => handleEdit(t.index, text)}
+            onEditTags={(tagged) => handleEditTags(t.index, tagged)}
           />
         ))}
         {running && <ThinkingRow />}
         <div ref={bottomRef} />
       </div>
+
+      {/* Voice pass */}
+      {complete && (
+        <div className="rounded-lg border p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-medium">Voice pass (ElevenLabs v3)</h2>
+              <p className="text-xs text-muted-foreground">
+                Inserts performance tags without changing a spoken word. Export
+                the ElevenLabs script from the Export menu.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              {hasTags && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowTags((v) => !v)}
+                >
+                  {showTags ? 'Hide tags' : 'Show tags'}
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleVoicePass}
+                disabled={voicePassLoading}
+              >
+                {voicePassLoading
+                  ? 'Tagging…'
+                  : hasTags
+                    ? 'Re-run voice pass'
+                    : 'Run voice pass'}
+              </Button>
+            </div>
+          </div>
+          {voicePass && (
+            <p className="text-xs text-muted-foreground">
+              {voicePass.verified} of {voicePass.verified + voicePass.failed}{' '}
+              turns verified (spoken words unchanged) ·{' '}
+              {voicePass.tagCount} tags · ~1 tag per {voicePass.tagsPerWords}{' '}
+              words
+              {voicePass.failed > 0 &&
+                ` · ${voicePass.failed} turn(s) left untagged (tagger altered the words)`}
+              . Set stability to Creative or Natural in ElevenLabs — Robust
+              ignores tags.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Claims checklist */}
       {complete && (
@@ -661,20 +767,28 @@ function TurnBlock({
   turn,
   editable,
   busy,
+  showTags,
   onRegenerate,
   onDelete,
   onEdit,
+  onEditTags,
 }: {
   turn: Turn;
   editable: boolean;
   busy: boolean;
+  showTags: boolean;
   onRegenerate: () => void;
   onDelete: () => void;
   onEdit: (text: string) => void;
+  onEditTags: (taggedText: string) => void;
 }) {
   const isModerator = turn.speakerId === MODERATOR_ID;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(turn.text);
+  const [tagsEditing, setTagsEditing] = useState(false);
+  const [tagsDraft, setTagsDraft] = useState(turn.taggedText ?? turn.text);
+  const displayText =
+    showTags && turn.taggedText ? turn.taggedText : turn.text;
 
   // Interjections render as a compact aside, not a full block.
   if (turn.turnClass === 'interjection') {
@@ -683,7 +797,7 @@ function TurnBlock({
         <span className="text-[10px] not-italic uppercase tracking-wide">
           {turn.speakerDisplayName}
         </span>
-        <span>“{turn.text}”</span>
+        <span>“{displayText}”</span>
         {editable && (
           <Button
             variant="ghost"
@@ -756,6 +870,19 @@ function TurnBlock({
             >
               Edit
             </Button>
+            {showTags && turn.taggedText && (
+              <Button
+                variant="ghost"
+                size="xs"
+                disabled={busy}
+                onClick={() => {
+                  setTagsDraft(turn.taggedText ?? turn.text);
+                  setTagsEditing(true);
+                }}
+              >
+                Edit tags
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="xs"
@@ -795,9 +922,41 @@ function TurnBlock({
             </Button>
           </div>
         </div>
+      ) : tagsEditing ? (
+        <div className="mt-2 space-y-2">
+          <Textarea
+            rows={5}
+            className="font-mono text-sm"
+            value={tagsDraft}
+            onChange={(e) => setTagsDraft(e.target.value)}
+          />
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              onClick={() => {
+                onEditTags(tagsDraft);
+                setTagsEditing(false);
+              }}
+            >
+              Save tags
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setTagsEditing(false)}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
       ) : (
-        <p className="mt-1 whitespace-pre-wrap leading-relaxed text-[15px]">
-          {turn.text}
+        <p
+          className={
+            'mt-1 whitespace-pre-wrap leading-relaxed text-[15px] ' +
+            (showTags && turn.taggedText ? 'font-mono text-[13px]' : '')
+          }
+        >
+          {displayText}
         </p>
       )}
     </div>

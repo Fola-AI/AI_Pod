@@ -42,6 +42,7 @@ interface AgentDraft {
   temperature: number;
   maxWordsPerTurn: number;
   referenceImage: string;
+  voiceId: string;
 }
 
 const NAME_POOL = ['Lara', 'Tony', 'Kimi', 'Ada', 'Zoe', 'Ravi'];
@@ -65,6 +66,7 @@ function makeAgent(i: number): AgentDraft {
     temperature: 0.85,
     maxWordsPerTurn: 160,
     referenceImage: '',
+    voiceId: '',
   };
 }
 
@@ -88,6 +90,7 @@ export default function NewSessionPage() {
   >([]);
   const [modName, setModName] = useState('Moderator');
   const [modModelId, setModModelId] = useState(FRONTIER_DEFAULT);
+  const [modVoiceId, setModVoiceId] = useState('');
   const [interjectionFrequency, setInterjectionFrequency] = useState<
     'low' | 'medium' | 'high'
   >('medium');
@@ -271,12 +274,14 @@ export default function NewSessionPage() {
           temperature: a.temperature,
           maxWordsPerTurn: a.maxWordsPerTurn,
           referenceImage: a.referenceImage.trim() || undefined,
+          voiceId: a.voiceId.trim() || undefined,
         })),
         moderator: {
           displayName: modName.trim() || 'Moderator',
           modelId: modModelId,
           interjectionFrequency,
           temperature: 0.7,
+          voiceId: modVoiceId.trim() || undefined,
         },
         targetWordCount,
         maxTurns,
@@ -545,15 +550,27 @@ export default function NewSessionPage() {
                       }
                     />
                   </div>
-                  <div className="space-y-1.5 col-span-2">
+                  <div className="space-y-1.5">
                     <Label className="text-xs">
-                      Reference image (filename or URL — for the manifest)
+                      Reference image (filename or URL)
                     </Label>
                     <Input
                       placeholder="lara-face.png or https://…"
                       value={a.referenceImage}
                       onChange={(e) =>
                         updateAgent(a.id, { referenceImage: e.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">
+                      ElevenLabs voice id (for synthesis)
+                    </Label>
+                    <Input
+                      placeholder="e.g. 21m00Tcm4TlvDq8ikWAM"
+                      value={a.voiceId}
+                      onChange={(e) =>
+                        updateAgent(a.id, { voiceId: e.target.value })
                       }
                     />
                   </div>
@@ -705,6 +722,14 @@ export default function NewSessionPage() {
                 <SelectItem value="high">High (~every 2nd turn)</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">ElevenLabs voice id (optional)</Label>
+            <Input
+              placeholder="e.g. 21m00Tcm4TlvDq8ikWAM"
+              value={modVoiceId}
+              onChange={(e) => setModVoiceId(e.target.value)}
+            />
           </div>
         </CardContent>
       </Card>

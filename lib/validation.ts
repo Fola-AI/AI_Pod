@@ -18,6 +18,7 @@ const agentSchema = z.object({
   temperature: z.number().min(0).max(2).default(0.85),
   maxWordsPerTurn: z.number().int().min(40).max(600).default(160),
   referenceImage: z.string().optional(),
+  voiceId: z.string().optional(),
 });
 
 const moderatorSchema = z.object({
@@ -25,6 +26,7 @@ const moderatorSchema = z.object({
   modelId: z.string().min(1),
   interjectionFrequency: z.enum(['low', 'medium', 'high']).default('medium'),
   temperature: z.number().min(0).max(2).default(0.7),
+  voiceId: z.string().optional(),
 });
 
 const sourceDocSchema = z.object({

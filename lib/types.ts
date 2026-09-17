@@ -59,6 +59,7 @@ export interface AgentConfig {
   temperature: number; // Default 0.85
   maxWordsPerTurn: number; // Default 160
   referenceImage?: string; // Optional filename/URL, carried to the manifest
+  voiceId?: string; // Optional ElevenLabs voice id (B-4)
 }
 
 export type InterjectionFrequency = 'low' | 'medium' | 'high';
@@ -68,6 +69,7 @@ export interface ModeratorConfig {
   modelId: string;
   interjectionFrequency: InterjectionFrequency; // Default medium (~every 3rd turn)
   temperature: number; // Default 0.7
+  voiceId?: string; // Optional ElevenLabs voice id (B-4)
 }
 
 export interface SourceDoc {
@@ -120,6 +122,7 @@ export interface Turn {
   turnType: TurnType;
   turnClass: TurnClass; // 'full' | 'interjection'
   text: string;
+  taggedText?: string; // Voice-pass output with ElevenLabs tags (B-1); never overwrites text
   modelId: string; // Which model actually produced this
   personaId?: string;
   inputTokens: number;
