@@ -5,6 +5,9 @@ import {
   toSessionConfig,
   validateReferences,
 } from '@/lib/validation';
+import { hasSearchKey, preflightSearch } from '@/lib/search';
+import { buildResearchPack } from '@/lib/search/research-pack';
+import { modelSupportsFunctionCalling } from '@/config/models';
 
 export const runtime = 'nodejs';
 
@@ -44,8 +47,36 @@ export async function POST(request: Request) {
     );
   }
 
+  const ws = parsed.data.webSearch;
+  const mode = ws?.mode ?? 'shared';
+  const wantsResearchPack =
+    mode !== 'none' &&
+    (ws?.researchPack === true ||
+      (mode === 'shared' &&
+        parsed.data.agents.some((a) => !modelSupportsFunctionCalling(a.modelId))));
+
+  // Pre-flight: shared search (and any research pack) needs the Brave key.
+  if (mode === 'shared' || wantsResearchPack) {
+    if (!hasSearchKey()) {
+      const pf = await preflightSearch();
+      return NextResponse.json({ error: pf.message }, { status: 400 });
+    }
+    const pf = await preflightSearch();
+    if (!pf.ok) {
+      return NextResponse.json({ error: pf.message }, { status: 400 });
+    }
+  }
+
   try {
     const config = toSessionConfig(parsed.data);
+    // Build the research brief before turn 1 when the session needs it.
+    if (wantsResearchPack) {
+      const pack = await buildResearchPack(config.topic, {
+        title: config.title,
+        resultsPerSearch: config.webSearch?.resultsPerSearch ?? 3,
+      });
+      if (pack.brief) config.researchPack = pack.brief;
+    }
     const session = await createSession(config);
     return NextResponse.json({ session }, { status: 201 });
   } catch (err) {

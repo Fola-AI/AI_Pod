@@ -24,6 +24,7 @@ function rowToTurn(r: TurnRow): Turn {
     text: r.text,
     taggedText: r.taggedText ?? undefined,
     searches: r.searches ?? undefined,
+    searchDegraded: r.searchDegraded || undefined,
     modelId: r.modelId,
     personaId: r.personaId ?? undefined,
     inputTokens: r.inputTokens,
@@ -140,6 +141,7 @@ export async function appendTurn(
       turnClass: turn.turnClass,
       text: turn.text,
       searches: turn.searches,
+      searchDegraded: turn.searchDegraded ?? false,
       modelId: turn.modelId,
       personaId: turn.personaId,
       inputTokens: turn.inputTokens,
@@ -243,6 +245,7 @@ export async function replaceTurn(
     wasTruncated?: boolean;
     modelId?: string;
     searches?: TurnSearch[];
+    searchDegraded?: boolean;
   },
 ): Promise<void> {
   await db
@@ -250,6 +253,7 @@ export async function replaceTurn(
     .set({
       ...fields,
       searches: fields.searches ?? null,
+      searchDegraded: fields.searchDegraded ?? false,
       wasTruncated: fields.wasTruncated ?? false,
       wasEdited: false,
       isStale: false,

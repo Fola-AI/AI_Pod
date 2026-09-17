@@ -2,7 +2,7 @@
 
 import { z } from 'zod';
 import type { SessionConfig } from '@/lib/types';
-import { getModel } from '@/config/models';
+import { getModel, providerSupportsWebSearch } from '@/config/models';
 import { isStanceBearing } from '@/lib/formats';
 
 export const MIN_AGENTS = 3;
@@ -65,11 +65,18 @@ export const createSessionSchema = z
     openingBanter: z.boolean().default(true),
     webSearch: z
       .object({
-        enabled: z.boolean().default(true),
+        mode: z.enum(['none', 'shared', 'native']).default('shared'),
         maxSearchesPerTurn: z.number().int().min(0).max(3).default(2),
-        maxSearchesPerSession: z.number().int().min(0).max(100).default(20),
+        maxSearchesPerSession: z.number().int().min(0).max(100).default(25),
+        resultsPerSearch: z.number().int().min(1).max(5).default(5),
+        researchPack: z.boolean().optional(),
       })
-      .default({ enabled: true, maxSearchesPerTurn: 2, maxSearchesPerSession: 20 }),
+      .default({
+        mode: 'shared',
+        maxSearchesPerTurn: 2,
+        maxSearchesPerSession: 25,
+        resultsPerSearch: 5,
+      }),
   })
   .refine((d) => d.agents.length === d.agentCount, {
     message: 'agents length must equal agentCount',
@@ -89,6 +96,18 @@ export function validateReferences(input: CreateSessionInput): string[] {
   }
   if (!getModel(input.moderator.modelId)) {
     errors.push(`Unknown moderator model: ${input.moderator.modelId}`);
+  }
+  // Native mode requires every agent on a provider with native search — the
+  // session may not mix native and unsupported providers (B-5.5, criterion 8).
+  if (input.webSearch?.mode === 'native') {
+    for (const a of input.agents) {
+      const model = getModel(a.modelId);
+      if (model && !providerSupportsWebSearch(model.provider)) {
+        errors.push(
+          `${a.displayName} is on a provider without native search; use shared mode or change the model.`,
+        );
+      }
+    }
   }
   return errors;
 }

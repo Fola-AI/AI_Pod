@@ -77,10 +77,12 @@ describe('extractResponsesSearches', () => {
     ];
     const searches = extractResponsesSearches(output)!;
     expect(searches).toHaveLength(1);
+    expect(searches[0].mode).toBe('native');
+    expect(searches[0].provider).toBe('openai');
     expect(searches[0].query).toBe('q1 | q2');
-    expect(searches[0].sources).toEqual([
+    expect(searches[0].results.map((r) => ({ url: r.url, title: r.title }))).toEqual([
       { url: 'https://a.com', title: 'A' },
-      { url: 'https://b.com', title: undefined },
+      { url: 'https://b.com', title: '' },
     ]);
   });
 
@@ -102,8 +104,8 @@ describe('extractResponsesSearches', () => {
     ];
     const searches = extractResponsesSearches(output)!;
     expect(searches[0].query).toBe('q1');
-    expect(searches[0].sources).toEqual([
-      { url: 'https://a.com', title: undefined },
+    expect(searches[0].results.map((r) => ({ url: r.url, title: r.title }))).toEqual([
+      { url: 'https://a.com', title: '' },
       { url: 'https://b.com', title: 'B' },
     ]);
   });
@@ -120,9 +122,9 @@ describe('extractResponsesSearches', () => {
       },
     ];
     const searches = extractResponsesSearches(output)!;
-    expect(searches[0].sources).toHaveLength(15);
+    expect(searches[0].results).toHaveLength(15);
     // s0 came from action.sources; the annotation dup must not re-add it.
-    expect(searches[0].sources.filter((s) => s.url === 'https://s0.com')).toHaveLength(1);
+    expect(searches[0].results.filter((s) => s.url === 'https://s0.com')).toHaveLength(1);
   });
 
   it('falls back to a singular action.query shape', () => {

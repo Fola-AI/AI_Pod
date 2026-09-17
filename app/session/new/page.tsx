@@ -25,10 +25,39 @@ import {
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { MODELS, PROVIDER_LABEL, modelSearchSupport } from '@/config/models';
+import {
+  MODELS,
+  PROVIDER_LABEL,
+  getModel,
+  modelSupportsFunctionCalling,
+  providerSupportsWebSearch,
+} from '@/config/models';
 import { BUILT_IN_PERSONAS } from '@/lib/personas';
 import { FORMAT_LIST, FORMATS, isStanceBearing } from '@/lib/formats';
 import type { ProviderId, SessionFormat, SessionConfig } from '@/lib/types';
+
+// How an agent's model will be grounded under the chosen session mode. `ok`
+// means the agent gets live search it can toggle; otherwise the label explains
+// the state (research-pack fallback, or blocked in native mode).
+function agentGroundingState(
+  modelId: string,
+  mode: 'none' | 'shared' | 'native',
+): { ok: boolean; label: string } {
+  if (mode === 'none') return { ok: false, label: 'No grounding this session' };
+  const model = getModel(modelId);
+  if (mode === 'native') {
+    return model && providerSupportsWebSearch(model.provider)
+      ? { ok: true, label: 'Native provider search' }
+      : {
+          ok: false,
+          label: `Off — ${model ? PROVIDER_LABEL[model.provider] : 'this provider'} has no native search; use Shared mode`,
+        };
+  }
+  // shared
+  return modelSupportsFunctionCalling(modelId)
+    ? { ok: true, label: 'Searches via the shared web tool' }
+    : { ok: false, label: "Research pack — this model can't call tools" };
+}
 import { createSession, fetchProviders } from '@/lib/client';
 import { estimateSessionCost, formatUsd } from '@/lib/cost';
 import { PRESETS } from '@/lib/presets';
@@ -100,7 +129,8 @@ export default function NewSessionPage() {
     'off' | 'low' | 'medium' | 'high'
   >('medium');
   const [openingBanter, setOpeningBanter] = useState(true);
-  const [webSearchEnabled, setWebSearchEnabled] = useState(true);
+  const [searchMode, setSearchMode] = useState<'none' | 'shared' | 'native'>('shared');
+  const [researchPack, setResearchPack] = useState(false);
   const [saving, setSaving] = useState(false);
 
   type ProviderStatus = Awaited<ReturnType<typeof fetchProviders>>;
@@ -293,9 +323,11 @@ export default function NewSessionPage() {
         interjectionRate,
         openingBanter,
         webSearch: {
-          enabled: webSearchEnabled,
+          mode: searchMode,
           maxSearchesPerTurn: 2,
-          maxSearchesPerSession: 20,
+          maxSearchesPerSession: 25,
+          resultsPerSearch: 5,
+          researchPack: researchPack || undefined,
         },
       });
       toast.success('Session created');
@@ -584,28 +616,36 @@ export default function NewSessionPage() {
                     />
                   </div>
                   <div className="space-y-1.5 col-span-2">
-                    <Label className="text-xs">Web search</Label>
-                    {modelSearchSupport(a.modelId).supported ? (
-                      <label className="flex items-center gap-2 h-8 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={a.webSearchEnabled}
-                          disabled={!webSearchEnabled}
-                          onChange={(e) =>
-                            updateAgent(a.id, {
-                              webSearchEnabled: e.target.checked,
-                            })
-                          }
-                        />
-                        {webSearchEnabled
-                          ? 'Searches the web when it needs a current fact'
-                          : 'Turn on session web search above to enable'}
-                      </label>
-                    ) : (
-                      <p className="h-8 flex items-center text-xs text-muted-foreground">
-                        Off — {modelSearchSupport(a.modelId).reason}
-                      </p>
-                    )}
+                    <Label className="text-xs">Grounding</Label>
+                    {(() => {
+                      const state = agentGroundingState(a.modelId, searchMode);
+                      if (searchMode === 'none') {
+                        return (
+                          <p className="h-8 flex items-center text-xs text-muted-foreground">
+                            No grounding this session
+                          </p>
+                        );
+                      }
+                      if (!state.ok) {
+                        return (
+                          <p className="h-8 flex items-center text-xs text-amber-600 dark:text-amber-500">
+                            {state.label}
+                          </p>
+                        );
+                      }
+                      return (
+                        <label className="flex items-center gap-2 h-8 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={a.webSearchEnabled}
+                            onChange={(e) =>
+                              updateAgent(a.id, { webSearchEnabled: e.target.checked })
+                            }
+                          />
+                          {a.webSearchEnabled ? state.label : 'Grounding off for this agent'}
+                        </label>
+                      );
+                    })()}
                   </div>
                 </div>
               </details>
@@ -817,18 +857,35 @@ export default function NewSessionPage() {
             </label>
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">Web search grounding</Label>
-            <label className="flex items-center gap-2 h-8 text-sm">
-              <input
-                type="checkbox"
-                checked={webSearchEnabled}
-                onChange={(e) => setWebSearchEnabled(e.target.checked)}
-              />
-              Let agents search the web
-            </label>
+            <Label className="text-xs">Grounding mode</Label>
+            <select
+              className="h-8 w-full rounded-md border bg-transparent px-2 text-sm"
+              value={searchMode}
+              onChange={(e) =>
+                setSearchMode(e.target.value as 'none' | 'shared' | 'native')
+              }
+            >
+              <option value="shared">Shared tool (all providers)</option>
+              <option value="native">Native (Anthropic / OpenAI / Google only)</option>
+              <option value="none">None</option>
+            </select>
             <p className="text-[10px] text-muted-foreground">
-              Anthropic, OpenAI, Google only. Others are off automatically.
+              {searchMode === 'shared'
+                ? 'Every agent searches through one internal tool (Brave), on equal footing. Models that can’t call tools get a research brief.'
+                : searchMode === 'native'
+                  ? 'Provider-native search. Agents on providers without it are blocked — switch them or use Shared.'
+                  : 'Agents debate ungrounded.'}
             </p>
+            {searchMode !== 'none' && (
+              <label className="flex items-center gap-2 h-8 text-sm">
+                <input
+                  type="checkbox"
+                  checked={researchPack}
+                  onChange={(e) => setResearchPack(e.target.checked)}
+                />
+                Add a pre-run research brief for everyone
+              </label>
+            )}
           </div>
         </CardContent>
       </Card>

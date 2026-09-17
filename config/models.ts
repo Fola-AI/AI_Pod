@@ -303,6 +303,28 @@ export function providerSupportsWebSearch(provider: ProviderId): boolean {
   return WEB_SEARCH_PROVIDERS.has(provider);
 }
 
+// Function/tool calling — needed for the shared web_search tool (B-5.5). Almost
+// every current model supports it; a model that doesn't routes to the research
+// pack. Defaults to true unless the registry entry says otherwise.
+export function modelSupportsFunctionCalling(modelId: string): boolean {
+  const model = getModel(modelId);
+  if (!model) return false;
+  return model.supportsFunctionCalling ?? true;
+}
+
+// Whether an agent on this model can be grounded in the given mode (B-5.5).
+// shared: needs function calling. native: needs a native-search provider.
+export function modelSupportsMode(
+  modelId: string,
+  mode: 'none' | 'shared' | 'native',
+): boolean {
+  if (mode === 'none') return true;
+  const model = getModel(modelId);
+  if (!model) return false;
+  if (mode === 'native') return providerSupportsWebSearch(model.provider);
+  return modelSupportsFunctionCalling(modelId); // shared
+}
+
 /** Whether a given model can use web search, and why not if it can't. */
 export function modelSearchSupport(modelId: string): {
   supported: boolean;

@@ -31,7 +31,13 @@ function renderSourceMaterial(docs?: SourceDoc[]): string {
 export function buildAgentSystemPrompt(
   config: SessionConfig,
   agent: AgentConfig,
-  opts: { holdsSeat?: boolean; webSearch?: boolean } = {},
+  opts: {
+    holdsSeat?: boolean;
+    // Grounding available to this turn: provider-native, the shared tool, or none.
+    search?: 'native' | 'shared';
+    // Pre-computed topic brief injected as shared reference (B-5.5 fallback).
+    researchPack?: string;
+  } = {},
 ): string {
   const persona = getPersona(agent.personaId);
   const framing = getFormatFraming(config.format);
@@ -65,10 +71,24 @@ export function buildAgentSystemPrompt(
     );
   }
 
-  if (opts.webSearch) {
+  // Research-pack fallback (B-5.5): a pre-run brief for agents that can't search
+  // live. Sits in the same slot as source material, cited the same way.
+  if (opts.researchPack) {
+    parts.push(
+      `RESEARCH BRIEF\nThe following was gathered before this discussion and shared with all participants. Treat it as reference. Cite it naturally in speech, and distinguish what it states from what you are inferring.\n\n${opts.researchPack}`,
+    );
+  }
+
+  // Search rules apply whenever a live search path is active this turn. The
+  // instruction is identical for native and shared — the difference is internal.
+  if (opts.search) {
     parts.push(
       `WEB SEARCH
-You can search the web when you genuinely need a current fact or a specific figure — don't search for things you already know. When you use something you found, say where it came from, in speech: "Reuters reported last month that…", "the World Bank's latest figure is about…". Never read out a URL, never use bracketed references, footnote markers, or link text — this is spoken audio.`,
+- You have a search tool. Use it when you are about to state a specific figure, date, study, or event and you are not certain of it. Do not search to decorate a point you could make without it.
+- Any specific current number — a capacity, a percentage, a year's figure, a dollar amount — must come from a search or from the material above, not from memory. If you find yourself about to recall one, search for it first.
+- Search with the words that would appear in the source, not with a full question.
+- If the results do not support what you were about to say, say something else. Do not stretch a source to fit the point.
+- Name sources in speech the way a person would: "Ember put global solar additions at 647 gigawatts last year." No URLs, no reference markers.`,
     );
   }
 

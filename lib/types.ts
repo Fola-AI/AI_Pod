@@ -28,15 +28,39 @@ export type InterjectionRate = 'off' | 'low' | 'medium' | 'high';
 
 // Web search grounding (P1-2). Only Anthropic, OpenAI, and Google have native
 // search; every other provider is forced off with a visible reason.
-export interface WebSearchConfig {
-  enabled: boolean; // Session master switch, default true
-  maxSearchesPerTurn: number; // Default 2, hard cap 3
-  maxSearchesPerSession: number; // Default 20
+
+// Grounding mode is session-level and never mixed across agents (B-5.5).
+//   'none'   — no grounding.
+//   'shared' — every agent uses the internal Brave-backed web_search tool
+//              (the default); equal footing across providers.
+//   'native' — provider-native search, Anthropic/OpenAI/Google only (Batch 5).
+export type SearchMode = 'none' | 'shared' | 'native';
+
+// A single normalised search result. In native mode providers expose the URL
+// (and often a title) but no snippet, so `snippet` may be empty there.
+export interface SearchResult {
+  title: string;
+  url: string;
+  snippet: string; // The text actually fed to the model (empty for native)
+  publishedDate?: string;
+  fetchedAt: string;
 }
 
+export interface WebSearchConfig {
+  mode: SearchMode; // Default 'shared'
+  maxSearchesPerTurn: number; // Default 2, hard cap 3
+  maxSearchesPerSession: number; // Default 25
+  resultsPerSearch: number; // Shared mode, default 5
+  researchPack?: boolean; // Optional pre-turn topic brief (B-5.5)
+}
+
+// One search a turn issued. Both modes write this shape (B-5.5).
 export interface TurnSearch {
+  mode: 'shared' | 'native';
   query: string;
-  sources: { url: string; title?: string }[];
+  results: SearchResult[]; // Snippets in shared mode; URL/title only in native
+  provider: string; // 'brave' | 'anthropic' | 'openai' | 'google'
+  latencyMs: number;
 }
 
 export type ModelTier = 'frontier' | 'mid' | 'fast';
@@ -51,6 +75,10 @@ export interface ModelEntry {
   inputPricePerMTok: number | null;
   outputPricePerMTok: number | null;
   supportsSystemPrompt: boolean;
+  // Whether the model supports function/tool calling — needed for shared-mode
+  // web search (B-5.5). Defaults to true; set false for models that can't call
+  // tools, which route to the research-pack fallback instead.
+  supportsFunctionCalling?: boolean;
   enabled: boolean;
 }
 
@@ -107,7 +135,8 @@ export interface SessionConfig {
   budgetCapUsd?: number; // Optional. Jump to closings once actual cost exceeds it
   interjectionRate?: InterjectionRate; // Agent reaction interjections. Default 'medium'
   openingBanter?: boolean; // Light chat before the topic. Default true
-  webSearch?: WebSearchConfig; // Web search grounding (P1-2)
+  webSearch?: WebSearchConfig; // Web search grounding (P1-2 / B-5.5)
+  researchPack?: string; // Pre-computed topic brief injected into agent prompts (B-5.5)
   createdAt: string;
 }
 
@@ -138,7 +167,8 @@ export interface Turn {
   turnClass: TurnClass; // 'full' | 'interjection'
   text: string;
   taggedText?: string; // Voice-pass output with ElevenLabs tags (B-1); never overwrites text
-  searches?: TurnSearch[]; // Web searches this turn issued (P1-2); never in spoken exports
+  searches?: TurnSearch[]; // Web searches this turn issued (P1-2/B-5.5); never in spoken exports
+  searchDegraded?: boolean; // A search failed this turn; agent spoke ungrounded (B-5.5)
   modelId: string; // Which model actually produced this
   personaId?: string;
   inputTokens: number;
@@ -176,10 +206,20 @@ export interface Session {
 
 // --- Provider adapter contract (PRD §6.2) ---
 
-export interface ChatMessage {
-  role: 'user' | 'assistant';
-  content: string;
+// A web_search call the model emitted (shared mode, B-5.5). One tool only, so
+// the only argument we carry is the query.
+export interface ToolCall {
+  id: string; // Provider's tool-call id, echoed back with the result
+  query: string;
 }
+
+// A message in the turn exchange. The tool variants appear only in shared-mode
+// function-calling loops: an assistant turn that requested searches, and the
+// tool result we feed back.
+export type ChatMessage =
+  | { role: 'user'; content: string }
+  | { role: 'assistant'; content: string; toolCalls?: ToolCall[] }
+  | { role: 'tool'; toolCallId: string; content: string };
 
 export interface GenerateParams {
   apiModelString: string;
@@ -189,10 +229,21 @@ export interface GenerateParams {
   maxTokens: number;
   // When set, enable the provider's native web search with this many max uses.
   webSearchMaxUses?: number;
+  // When true, advertise the internal web_search function tool (shared mode).
+  searchTool?: boolean;
+  // Steer tool use while the tool stays advertised. 'none' finalises the loop
+  // (some models compulsively call tools and 400 if the array is just dropped);
+  // 'required' forces a call (used to guarantee each agent grounds once).
+  toolChoice?: 'auto' | 'none' | 'required';
 }
 
 // Normalised finish reason across providers.
-export type ProviderStopReason = 'complete' | 'max_tokens' | 'refusal' | 'other';
+export type ProviderStopReason =
+  | 'complete'
+  | 'max_tokens'
+  | 'refusal'
+  | 'tool_calls' // model wants to call the search tool (shared mode)
+  | 'other';
 
 export interface GenerateResult {
   text: string;
@@ -203,6 +254,7 @@ export interface GenerateResult {
   latencyMs: number;
   rawModel?: string; // Model string the provider reports having used
   searches?: TurnSearch[]; // Native web searches the model issued this call
+  toolCalls?: ToolCall[]; // web_search calls emitted this step (shared mode)
 }
 
 // Alias requested in the P0 brief; same shape as GenerateResult.

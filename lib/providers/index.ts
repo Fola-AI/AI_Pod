@@ -85,15 +85,28 @@ export function getAdapter(provider: ProviderId): ProviderAdapter {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// Some providers state how long to wait in the 429 body, e.g. Groq's
+// "Please try again in 18.4879s." Honour it (capped) so a tight per-minute
+// token window is waited out rather than burned through the retry budget.
+const MAX_RETRY_AFTER_MS = 30_000;
+export function parseRetryAfterMs(message: string): number | undefined {
+  const m = /try again in\s+([\d.]+)\s*s/i.exec(message ?? '');
+  if (!m) return undefined;
+  const secs = Number(m[1]);
+  if (!Number.isFinite(secs)) return undefined;
+  return Math.min(MAX_RETRY_AFTER_MS, Math.ceil(secs * 1000) + 500);
+}
+
 /**
  * Retry with exponential backoff (P0-2). Only `transient` failures are retried
  * (429 with longer backoff, 5xx, network). `fatal` failures (bad/absent key,
  * insufficient credits, quota, model-not-found, malformed request) throw
  * immediately — retrying them wastes time and money and hides the real problem.
+ * A 429 that states an explicit retry delay is waited out (capped).
  */
 export async function withRetry<T>(
   fn: () => Promise<T>,
-  attempts = 3,
+  attempts = 4,
 ): Promise<T> {
   let lastErr: unknown;
   for (let i = 0; i < attempts; i++) {
@@ -107,8 +120,10 @@ export async function withRetry<T>(
       }
       if (i === attempts - 1) break;
       const isRate = err instanceof ProviderError && err.isRateLimit;
+      const stated =
+        err instanceof ProviderError ? parseRetryAfterMs(err.message) : undefined;
       const base = isRate ? 4000 : 1000;
-      const backoff = base * Math.pow(2, i) + Math.random() * 500;
+      const backoff = stated ?? base * Math.pow(2, i) + Math.random() * 500;
       await sleep(backoff);
     }
   }

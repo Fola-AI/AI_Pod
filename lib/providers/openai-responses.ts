@@ -16,14 +16,17 @@
 //     we attach the full source list to the joined query string.
 
 import type {
+  ChatMessage,
   GenerateParams,
   GenerateResult,
   ProviderAdapter,
   ProviderStopReason,
+  ToolCall,
   TurnSearch,
 } from '@/lib/types';
 import { ProviderError } from './errors';
 import { postJson } from './http';
+import { WEB_SEARCH_TOOL } from '@/lib/search';
 
 const API_URL = 'https://api.openai.com/v1/responses';
 
@@ -92,14 +95,15 @@ const MAX_SOURCES_PER_TURN = 15;
 // the joined query string.
 export function extractResponsesSearches(output: any[]): TurnSearch[] | undefined {
   if (!Array.isArray(output)) return undefined;
+  const fetchedAt = new Date().toISOString();
   const queries: string[] = [];
-  const sources: { url: string; title?: string }[] = [];
+  const sources: { url: string; title: string; snippet: string; fetchedAt: string }[] = [];
   const seen = new Set<string>();
   const addSource = (url: unknown, title?: unknown) => {
     if (typeof url !== 'string' || !url || seen.has(url)) return;
     if (sources.length >= MAX_SOURCES_PER_TURN) return;
     seen.add(url);
-    sources.push({ url, title: typeof title === 'string' ? title : undefined });
+    sources.push({ url, title: typeof title === 'string' ? title : '', snippet: '', fetchedAt });
   };
 
   for (const item of output) {
@@ -127,7 +131,57 @@ export function extractResponsesSearches(output: any[]): TurnSearch[] | undefine
     }
   }
   if (queries.length === 0 && sources.length === 0) return undefined;
-  return [{ query: queries.join(' | ') || '(web search)', sources }];
+  return [
+    {
+      mode: 'native',
+      query: queries.join(' | ') || '(web search)',
+      results: sources,
+      provider: 'openai',
+      latencyMs: 0,
+    },
+  ];
+}
+
+// Map our ChatMessage union to Responses `input` items. Prior tool calls replay
+// as function_call items and our results as function_call_output items.
+function buildResponsesInput(messages: ChatMessage[]): any[] {
+  const input: any[] = [];
+  for (const m of messages) {
+    if (m.role === 'tool') {
+      input.push({ type: 'function_call_output', call_id: m.toolCallId, output: m.content });
+    } else if (m.role === 'assistant' && m.toolCalls?.length) {
+      if (m.content) input.push({ role: 'assistant', content: m.content });
+      for (const tc of m.toolCalls) {
+        input.push({
+          type: 'function_call',
+          call_id: tc.id,
+          name: WEB_SEARCH_TOOL.name,
+          arguments: JSON.stringify({ query: tc.query }),
+        });
+      }
+    } else {
+      input.push({ role: m.role, content: m.content });
+    }
+  }
+  return input;
+}
+
+// Parse function_call output items into ToolCalls (shared mode).
+function parseResponsesToolCalls(output: any[]): ToolCall[] | undefined {
+  if (!Array.isArray(output)) return undefined;
+  const out: ToolCall[] = [];
+  for (const item of output) {
+    if (item?.type === 'function_call' && item?.name === WEB_SEARCH_TOOL.name) {
+      let query = '';
+      try {
+        query = JSON.parse(item.arguments || '{}')?.query ?? '';
+      } catch {
+        /* malformed args */
+      }
+      out.push({ id: item.call_id ?? crypto.randomUUID(), query: String(query) });
+    }
+  }
+  return out.length ? out : undefined;
 }
 
 export function createOpenAIResponsesAdapter(apiKey: string): ProviderAdapter {
@@ -135,11 +189,9 @@ export function createOpenAIResponsesAdapter(apiKey: string): ProviderAdapter {
     id: 'openai',
     async generate(params: GenerateParams): Promise<GenerateResult> {
       const headers = { Authorization: `Bearer ${apiKey}` };
-      const input = params.messages.map((m) => ({
-        role: m.role,
-        content: m.content,
-      }));
+      const input = buildResponsesInput(params.messages);
       const useWebSearch = Boolean(params.webSearchMaxUses && params.webSearchMaxUses > 0);
+      const useSearchTool = Boolean(params.searchTool);
 
       // Self-heal: some reasoning models reject `temperature`. Retry without it.
       let useTemperature = true;
@@ -149,14 +201,28 @@ export function createOpenAIResponsesAdapter(apiKey: string): ProviderAdapter {
         input,
         max_output_tokens: params.maxTokens,
         ...(useTemperature ? { temperature: params.temperature } : {}),
-        ...(useWebSearch
+        // Shared function tool (B-5.5) and native web search are mutually
+        // exclusive — a session runs in exactly one mode.
+        ...(useSearchTool
           ? {
-              tools: [{ type: 'web_search' }],
-              // Return the tool's result URLs on the search call itself, so we
-              // capture sources even when the model doesn't cite them in speech.
-              include: ['web_search_call.action.sources'],
+              tools: [
+                {
+                  type: 'function',
+                  name: WEB_SEARCH_TOOL.name,
+                  description: WEB_SEARCH_TOOL.description,
+                  parameters: WEB_SEARCH_TOOL.parameters,
+                },
+              ],
+              tool_choice: params.toolChoice ?? 'auto',
             }
-          : {}),
+          : useWebSearch
+            ? {
+                tools: [{ type: 'web_search' }],
+                // Return the tool's result URLs on the search call itself, so we
+                // capture sources even when the model doesn't cite in speech.
+                include: ['web_search_call.action.sources'],
+              }
+            : {}),
       });
 
       const start = Date.now();
@@ -187,16 +253,20 @@ export function createOpenAIResponsesAdapter(apiKey: string): ProviderAdapter {
       const outText = extractText(output);
       const incompleteReason: string | undefined = json?.incomplete_details?.reason;
       const rawStopReason: string = incompleteReason ?? json?.status ?? '';
+      const toolCalls = useSearchTool ? parseResponsesToolCalls(output) : undefined;
 
       return {
         text: outText.trim(),
-        stopReason: mapResponsesStop(json?.status ?? '', incompleteReason),
+        stopReason: toolCalls?.length
+          ? 'tool_calls'
+          : mapResponsesStop(json?.status ?? '', incompleteReason),
         rawStopReason,
         inputTokens: json?.usage?.input_tokens ?? 0,
         outputTokens: json?.usage?.output_tokens ?? 0,
         latencyMs,
         rawModel: json?.model,
         searches: useWebSearch ? extractResponsesSearches(output) : undefined,
+        toolCalls,
       };
     },
   };

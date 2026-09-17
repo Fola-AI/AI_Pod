@@ -4,19 +4,23 @@
 // where the API genuinely differs (Anthropic's system param, Google's contents).
 
 import type {
+  ChatMessage,
   GenerateParams,
   GenerateResult,
   ProviderAdapter,
   ProviderId,
   ProviderStopReason,
+  ToolCall,
 } from '@/lib/types';
 import { ProviderError } from './errors';
 import { postJson } from './http';
+import { WEB_SEARCH_TOOL } from '@/lib/search';
 
-// NOTE: web search is NOT handled here. OpenAI's web search lives only on the
-// Responses API (see openai-responses.ts); the OpenAI-compatible providers that
-// share this base (xAI, DeepSeek, Groq, Mistral, Alibaba, Meta) have no Chat
-// Completions web search, so this adapter deliberately stays search-free.
+// NOTE: native web search is NOT handled here. OpenAI's native web search lives
+// on the Responses API (openai-responses.ts); the OpenAI-compatible providers
+// that share this base (xAI, DeepSeek, Groq, Mistral, Alibaba, Meta) have no
+// native Chat Completions web search. What this base DOES support is the shared
+// web_search *function tool* (B-5.5) via standard function calling.
 
 function mapOpenAIStop(reason: string): ProviderStopReason {
   switch (reason) {
@@ -26,9 +30,48 @@ function mapOpenAIStop(reason: string): ProviderStopReason {
       return 'max_tokens';
     case 'content_filter':
       return 'refusal';
+    case 'tool_calls':
+      return 'tool_calls';
     default:
       return reason ? 'other' : 'complete';
   }
+}
+
+// Map our ChatMessage union to the Chat Completions wire shape.
+function toWire(m: ChatMessage): Record<string, unknown> {
+  if (m.role === 'tool') {
+    return { role: 'tool', tool_call_id: m.toolCallId, content: m.content };
+  }
+  if (m.role === 'assistant' && m.toolCalls?.length) {
+    return {
+      role: 'assistant',
+      content: m.content ?? '',
+      tool_calls: m.toolCalls.map((tc) => ({
+        id: tc.id,
+        type: 'function',
+        function: { name: WEB_SEARCH_TOOL.name, arguments: JSON.stringify({ query: tc.query }) },
+      })),
+    };
+  }
+  return { role: m.role, content: m.content };
+}
+
+// Parse web_search tool calls out of a Chat Completions message.
+function parseToolCalls(message: any): ToolCall[] | undefined {
+  const tcs = message?.tool_calls;
+  if (!Array.isArray(tcs)) return undefined;
+  const out: ToolCall[] = [];
+  for (const tc of tcs) {
+    if (tc?.function?.name !== WEB_SEARCH_TOOL.name) continue;
+    let query = '';
+    try {
+      query = JSON.parse(tc.function.arguments || '{}')?.query ?? '';
+    } catch {
+      /* malformed args — skip query */
+    }
+    out.push({ id: tc.id ?? crypto.randomUUID(), query: String(query) });
+  }
+  return out.length ? out : undefined;
 }
 
 export interface OpenAICompatibleConfig {
@@ -47,28 +90,16 @@ export function createOpenAICompatibleAdapter(
   return {
     id: cfg.id,
     async generate(params: GenerateParams): Promise<GenerateResult> {
-      const messages: { role: string; content: string }[] = [];
-
+      const wire: Record<string, unknown>[] = params.messages.map(toWire);
       if (supportsSystemRole && params.systemPrompt) {
-        messages.push({ role: 'system', content: params.systemPrompt });
-        for (const m of params.messages) messages.push(m);
-      } else {
-        // Fold the system prompt into the first user message.
-        let systemFolded = false;
-        for (let i = 0; i < params.messages.length; i++) {
-          const m = params.messages[i];
-          if (!systemFolded && m.role === 'user' && params.systemPrompt) {
-            messages.push({
-              role: 'user',
-              content: `${params.systemPrompt}\n\n${m.content}`,
-            });
-            systemFolded = true;
-          } else {
-            messages.push(m);
-          }
-        }
-        if (!systemFolded && params.systemPrompt) {
-          messages.unshift({ role: 'user', content: params.systemPrompt });
+        wire.unshift({ role: 'system', content: params.systemPrompt });
+      } else if (params.systemPrompt) {
+        // No system role: fold the system prompt into the first user message.
+        const firstUser = wire.find((w) => w.role === 'user');
+        if (firstUser) {
+          firstUser.content = `${params.systemPrompt}\n\n${firstUser.content}`;
+        } else {
+          wire.unshift({ role: 'user', content: params.systemPrompt });
         }
       }
 
@@ -82,9 +113,25 @@ export function createOpenAICompatibleAdapter(
       let tokenParam: 'max_tokens' | 'max_completion_tokens' = 'max_tokens';
       const makeBody = () => ({
         model: params.apiModelString,
-        messages,
+        messages: wire,
         [tokenParam]: params.maxTokens,
         ...(useTemperature ? { temperature: params.temperature } : {}),
+        // Shared web_search function tool (B-5.5).
+        ...(params.searchTool
+          ? {
+              tools: [
+                {
+                  type: 'function',
+                  function: {
+                    name: WEB_SEARCH_TOOL.name,
+                    description: WEB_SEARCH_TOOL.description,
+                    parameters: WEB_SEARCH_TOOL.parameters,
+                  },
+                },
+              ],
+              tool_choice: params.toolChoice ?? 'auto',
+            }
+          : {}),
       });
       const start = Date.now();
       let res = await postJson(url, makeBody(), headers);
@@ -115,19 +162,22 @@ export function createOpenAICompatibleAdapter(
         });
       }
 
-      const outText: string = json?.choices?.[0]?.message?.content ?? '';
+      const message = json?.choices?.[0]?.message;
+      const outText: string = message?.content ?? '';
       const inputTokens: number = json?.usage?.prompt_tokens ?? 0;
       const outputTokens: number = json?.usage?.completion_tokens ?? 0;
       const rawStopReason: string = json?.choices?.[0]?.finish_reason ?? '';
+      const toolCalls = params.searchTool ? parseToolCalls(message) : undefined;
 
       return {
         text: outText.trim(),
-        stopReason: mapOpenAIStop(rawStopReason),
+        stopReason: toolCalls?.length ? 'tool_calls' : mapOpenAIStop(rawStopReason),
         rawStopReason,
         inputTokens,
         outputTokens,
         latencyMs,
         rawModel: json?.model,
+        toolCalls,
       };
     },
   };

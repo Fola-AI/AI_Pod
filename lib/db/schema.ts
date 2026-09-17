@@ -52,6 +52,7 @@ export const turns = pgTable(
     text: text('text').notNull(),
     taggedText: text('tagged_text'),
     searches: jsonb('searches').$type<TurnSearch[]>(),
+    searchDegraded: boolean('search_degraded').notNull().default(false),
     modelId: text('model_id').notNull(),
     personaId: text('persona_id'),
     inputTokens: integer('input_tokens').notNull().default(0),
