@@ -6,6 +6,7 @@
 import type { ProviderAdapter, ProviderId } from '@/lib/types';
 import { PROVIDER_ENV_KEY } from '@/config/models';
 import { MissingKeyError, ProviderError } from './errors';
+import { TIMEOUT_STATUS } from './http';
 import { createAnthropicAdapter } from './anthropic';
 import { createGoogleAdapter } from './google';
 import { createOpenAICompatibleAdapter } from './base-openai';
@@ -109,6 +110,7 @@ export async function withRetry<T>(
   attempts = 4,
 ): Promise<T> {
   let lastErr: unknown;
+  let timeoutRetries = 0;
   for (let i = 0; i < attempts; i++) {
     try {
       return await fn();
@@ -118,6 +120,10 @@ export async function withRetry<T>(
       if (err instanceof ProviderError && err.failureClass === 'fatal') {
         throw err;
       }
+      // A client-side timeout is retried at most once: a provider hung once is
+      // likely to hang again, and retrying 4x turns one bad turn into minutes.
+      const isTimeout = err instanceof ProviderError && err.status === TIMEOUT_STATUS;
+      if (isTimeout && ++timeoutRetries > 1) throw err;
       if (i === attempts - 1) break;
       const isRate = err instanceof ProviderError && err.isRateLimit;
       const stated =

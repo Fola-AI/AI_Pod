@@ -12,7 +12,7 @@ import type {
 } from '@/lib/types';
 import { runSearch, type RunSearchOutcome } from '@/lib/search';
 
-// Safety bound on round-trips regardless of the per-turn search cap.
+// Absolute ceiling on model round-trips per turn, regardless of search budget.
 const MAX_STEPS = 5;
 
 export interface SharedSearchBudget {
@@ -67,7 +67,11 @@ export async function runSharedSearchLoop(
   let exhausted = false; // search budget used up this turn
   let result: GenerateResult | null = null;
 
-  for (let step = 0; step < MAX_STEPS; step++) {
+  // Bound round-trips to the search budget (searches + one forced finalize +
+  // slack), capped by the absolute ceiling. Keeps a compulsive caller from
+  // stacking many slow model calls into one turn.
+  const maxSteps = Math.min(MAX_STEPS, budget.perTurn + 2);
+  for (let step = 0; step < maxSteps; step++) {
     // Once the budget is spent, force a final answer: keep the tool advertised
     // but set toolChoice 'none' (some models — e.g. Groq's gpt-oss — compulsively
     // call the tool and 400 if it's simply dropped) with an explicit directive.
