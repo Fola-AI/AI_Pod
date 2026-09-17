@@ -69,25 +69,40 @@ export function createOpenAICompatibleAdapter(
 
       const url = `${cfg.baseUrl}/chat/completions`;
       const headers = { Authorization: `Bearer ${cfg.apiKey}` };
-      const baseBody = {
-        model: params.apiModelString,
-        messages,
-        max_tokens: params.maxTokens,
-      };
 
+      // Self-heal per-model parameter quirks: some models reject a non-default
+      // `temperature`, and newer OpenAI models require `max_completion_tokens`
+      // instead of `max_tokens`. Retry with the offending parameter adjusted.
+      let useTemperature = true;
+      let tokenParam: 'max_tokens' | 'max_completion_tokens' = 'max_tokens';
       const start = Date.now();
       let res = await postJson(
         url,
-        { ...baseBody, temperature: params.temperature },
+        { model: params.apiModelString, messages, [tokenParam]: params.maxTokens, temperature: params.temperature },
         headers,
       );
-      // Some models only accept the default temperature; retry without it.
-      if (
-        !res.ok &&
-        res.status === 400 &&
-        /temperature/i.test(res.json?.error?.message ?? res.text ?? '')
-      ) {
-        res = await postJson(url, baseBody, headers);
+      for (let i = 0; i < 2 && !res.ok && res.status === 400; i++) {
+        const msg = res.json?.error?.message ?? res.text ?? '';
+        if (useTemperature && /temperature/i.test(msg)) {
+          useTemperature = false;
+        } else if (
+          tokenParam === 'max_tokens' &&
+          /max_tokens|max_completion_tokens/i.test(msg)
+        ) {
+          tokenParam = 'max_completion_tokens';
+        } else {
+          break; // not a recoverable parameter error
+        }
+        res = await postJson(
+          url,
+          {
+            model: params.apiModelString,
+            messages,
+            [tokenParam]: params.maxTokens,
+            ...(useTemperature ? { temperature: params.temperature } : {}),
+          },
+          headers,
+        );
       }
       const { ok, status, json, text } = res;
       const latencyMs = Date.now() - start;
