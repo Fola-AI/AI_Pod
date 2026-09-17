@@ -18,6 +18,7 @@ import {
   calibratedWordBudget,
   getModel,
   MODELS,
+  modelHasLowToolPropensity,
   modelSupportsFunctionCalling,
   providerSupportsWebSearch,
 } from '@/config/models';
@@ -251,7 +252,12 @@ export async function executeTurn(
       const priorFullTurns = priorTurns.some(
         (t) => t.speakerId === plan.speakerId && t.turnClass === 'full',
       );
-      const forceFirstOn = config.webSearch?.forceFirstSearch === true; // default off
+      // Per-agent override → session override → default by model tool-propensity
+      // (on for low-propensity models like DeepSeek/gpt-oss, off for the rest).
+      const forceFirstOn =
+        plan.agent?.forceFirstSearch ??
+        config.webSearch?.forceFirstSearch ??
+        modelHasLowToolPropensity(plan.modelId);
       const budget = {
         perTurn: Math.min(3, config.webSearch?.maxSearchesPerTurn ?? 2),
         resultsPerSearch: config.webSearch?.resultsPerSearch ?? 5,
@@ -277,6 +283,17 @@ export async function executeTurn(
     }
     if (!v.valid && v.reason === 'empty') {
       throw new EmptyContentError(model.provider, model.displayName);
+    }
+  }
+
+  // Meta-commentary: the model narrated its own process (e.g. "the search
+  // results show…", "now I'll compose my closing"). Retry with an explicit
+  // speak-only instruction; accept after two tries (better than looping).
+  if (!v.valid && v.reason === 'meta') {
+    for (let i = 0; i < 2 && !v.valid && v.reason === 'meta'; i++) {
+      const speakOnly = `${baseUserMessage}\n\nSpeak only the words the audience hears. Do not narrate your own process, do not discuss which source or figure to use, and do not announce what you are about to say. Begin your spoken turn directly.`;
+      ({ result, searches, degraded } = await call(baseMaxTokens, speakOnly));
+      v = validateTurn(result.text, result.stopReason);
     }
   }
 

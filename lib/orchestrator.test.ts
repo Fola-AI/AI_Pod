@@ -124,6 +124,31 @@ describe('moderator-directed routing', () => {
     expect(plan.instructionOpts.moderatorDirected).toBe(true);
   });
 
+  it('honours a stated closing order from the call-closings turn', () => {
+    const turns = baseTurns();
+    turns.push(
+      turn(
+        'moderator',
+        'Moderator',
+        'call-closings',
+        'Tony, Lara, Kimi — a closing thought each, in that order.',
+      ),
+    );
+    const plan = planNextTurn(config, turns, {})!;
+    expect(plan.turnType).toBe('closing');
+    expect(plan.speakerId).toBe('a3'); // Tony first, per the stated order
+  });
+
+  it('falls back to config order when the call-closings names no full sequence', () => {
+    const turns = baseTurns();
+    turns.push(
+      turn('moderator', 'Moderator', 'call-closings', 'Let us hear closing thoughts.'),
+    );
+    const plan = planNextTurn(config, turns, {})!;
+    expect(plan.turnType).toBe('closing');
+    expect(plan.speakerId).toBe('a1'); // Lara — config order
+  });
+
   it('falls back to rotation when the moderator names no one', () => {
     const turns = baseTurns();
     turns.push(

@@ -328,6 +328,18 @@ export function modelSupportsFunctionCalling(modelId: string): boolean {
   return model.supportsFunctionCalling ?? true;
 }
 
+// Providers whose models reliably CAN call the search tool but often DON'T when
+// they should — they state figures from memory (observed for DeepSeek and Groq's
+// gpt-oss in B-5.5 full runs). These get forced first-turn search by default.
+// OpenAI, xAI and Anthropic search readily and are not forced.
+const LOW_TOOL_PROPENSITY_PROVIDERS = new Set<ProviderId>(['deepseek', 'groq']);
+
+export function modelHasLowToolPropensity(modelId: string): boolean {
+  const model = getModel(modelId);
+  if (!model) return false;
+  return model.lowToolPropensity ?? LOW_TOOL_PROPENSITY_PROVIDERS.has(model.provider);
+}
+
 // Whether an agent on this model can be grounded in the given mode (B-5.5).
 // shared: needs function calling. native: needs a native-search provider.
 export function modelSupportsMode(

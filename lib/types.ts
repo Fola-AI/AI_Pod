@@ -83,6 +83,10 @@ export interface ModelEntry {
   // web search (B-5.5). Defaults to true; set false for models that can't call
   // tools, which route to the research-pack fallback instead.
   supportsFunctionCalling?: boolean;
+  // Whether the model reliably calls the search tool when it should. Low-propensity
+  // models (they state figures from memory) get forced first-turn search by
+  // default (B-5.5). Undefined → provider default.
+  lowToolPropensity?: boolean;
   // Per-model calibration for the stated word budget. Some models systematically
   // overrun the word target; a factor < 1 tells them a lower number so actual
   // output lands near maxWordsPerTurn. Defaults to the provider factor, else 1.
@@ -110,6 +114,9 @@ export interface AgentConfig {
   referenceImage?: string; // Optional filename/URL, carried to the manifest
   voiceId?: string; // Optional ElevenLabs voice id (B-4)
   webSearchEnabled?: boolean; // Per-agent search, default true where supported (P1-2)
+  // Force a search on this agent's first substantive turn (shared mode, B-5.5).
+  // Undefined → default by model tool-propensity (on for low-propensity models).
+  forceFirstSearch?: boolean;
 }
 
 export type InterjectionFrequency = 'low' | 'medium' | 'high';

@@ -328,7 +328,9 @@ export default function NewSessionPage() {
           maxSearchesPerTurn: 2,
           maxSearchesPerSession: 25,
           resultsPerSearch: 5,
-          forceFirstSearch,
+          // Only send when the operator opts to force ALL agents; otherwise
+          // leave it per-model (auto for low-tool-propensity models).
+          forceFirstSearch: forceFirstSearch || undefined,
           researchPack: researchPack || undefined,
         },
       });
@@ -885,7 +887,7 @@ export default function NewSessionPage() {
                   checked={forceFirstSearch}
                   onChange={(e) => setForceFirstSearch(e.target.checked)}
                 />
-                Force one search on each agent&rsquo;s first turn
+                Force every agent to search on turn one (else auto by model)
               </label>
             )}
             {searchMode !== 'none' && (

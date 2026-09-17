@@ -20,6 +20,7 @@ const agentSchema = z.object({
   referenceImage: z.string().optional(),
   voiceId: z.string().optional(),
   webSearchEnabled: z.boolean().optional(),
+  forceFirstSearch: z.boolean().optional(),
 });
 
 const moderatorSchema = z.object({
@@ -69,7 +70,9 @@ export const createSessionSchema = z
         maxSearchesPerTurn: z.number().int().min(0).max(3).default(2),
         maxSearchesPerSession: z.number().int().min(0).max(100).default(25),
         resultsPerSearch: z.number().int().min(1).max(5).default(5),
-        forceFirstSearch: z.boolean().default(false),
+        // Optional global override; when unset, forcing is decided per agent by
+        // model tool-propensity (B-5.5).
+        forceFirstSearch: z.boolean().optional(),
         researchPack: z.boolean().optional(),
       })
       .default({
@@ -77,7 +80,6 @@ export const createSessionSchema = z
         maxSearchesPerTurn: 2,
         maxSearchesPerSession: 25,
         resultsPerSearch: 5,
-        forceFirstSearch: false,
       }),
   })
   .refine((d) => d.agents.length === d.agentCount, {

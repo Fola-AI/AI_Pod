@@ -123,6 +123,24 @@ function findDirectedAgent(config: SessionConfig, text: string) {
   return (addressed ?? mentioned)?.agent ?? null;
 }
 
+/**
+ * The order agents should give closings in. If the moderator's call-closings
+ * turn names every agent, that stated order wins (same principle as
+ * moderator-directed routing); otherwise config order.
+ */
+function statedClosingOrder(config: SessionConfig, turns: Turn[]): AgentConfig[] {
+  const call = [...turns].reverse().find((t) => t.turnType === 'call-closings');
+  if (!call) return config.agents;
+  const positioned = config.agents.map((agent) => {
+    const n = escapeRegex(agent.displayName);
+    const idx = call.text.search(new RegExp(`\\b${n}\\b`, 'i'));
+    return { agent, idx };
+  });
+  // Only honour a stated order when every agent is named exactly.
+  if (positioned.some((p) => p.idx < 0)) return config.agents;
+  return positioned.sort((a, b) => a.idx - b.idx).map((p) => p.agent);
+}
+
 /** Plan a turn inside the round loop (agents rotate, moderator interjects). */
 function planRoundTurn(
   config: SessionConfig,
@@ -306,10 +324,13 @@ export function planNextTurn(
     return planRoundTurn(config, turns, opts.suppressInterjection ?? false);
   }
 
-  // 5. Agent closing statements, in order.
+  // 5. Agent closing statements. Honour an order the moderator stated in the
+  // call-closings turn ("Otis, Sol, Gretchen, Deepa — in that order"); fall back
+  // to config order if the moderator named no complete sequence.
   const closingsDone = turns.filter((t) => t.turnType === 'closing').length;
   if (closingsDone < N) {
-    return agentPlan(config, config.agents[closingsDone], 'closing', {});
+    const order = statedClosingOrder(config, turns);
+    return agentPlan(config, order[closingsDone], 'closing', {});
   }
 
   // 6. Moderator closing (declines a winner).
