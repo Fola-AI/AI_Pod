@@ -130,6 +130,7 @@ export default function NewSessionPage() {
   >('medium');
   const [openingBanter, setOpeningBanter] = useState(true);
   const [searchMode, setSearchMode] = useState<'none' | 'shared' | 'native'>('shared');
+  const [forceFirstSearch, setForceFirstSearch] = useState(true);
   const [researchPack, setResearchPack] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -327,6 +328,7 @@ export default function NewSessionPage() {
           maxSearchesPerTurn: 2,
           maxSearchesPerSession: 25,
           resultsPerSearch: 5,
+          forceFirstSearch,
           researchPack: researchPack || undefined,
         },
       });
@@ -876,6 +878,16 @@ export default function NewSessionPage() {
                   ? 'Provider-native search. Agents on providers without it are blocked — switch them or use Shared.'
                   : 'Agents debate ungrounded.'}
             </p>
+            {searchMode === 'shared' && (
+              <label className="flex items-center gap-2 h-8 text-sm">
+                <input
+                  type="checkbox"
+                  checked={forceFirstSearch}
+                  onChange={(e) => setForceFirstSearch(e.target.checked)}
+                />
+                Force one search on each agent&rsquo;s first turn
+              </label>
+            )}
             {searchMode !== 'none' && (
               <label className="flex items-center gap-2 h-8 text-sm">
                 <input

@@ -6,7 +6,15 @@ import type { SearchResult } from '@/lib/types';
 import type { SearchProvider } from './types';
 import { ProviderError } from '@/lib/providers/errors';
 
-const ENDPOINT = 'https://api.search.brave.com/res/v1/web/search';
+// Endpoint is overridable (BRAVE_SEARCH_ENDPOINT) for testing outages and for
+// pointing at a compatible proxy; defaults to Brave's public API. Read at call
+// time so it can change without a rebuild.
+function endpoint(): string {
+  return (
+    process.env.BRAVE_SEARCH_ENDPOINT?.trim() ||
+    'https://api.search.brave.com/res/v1/web/search'
+  );
+}
 const TIMEOUT_MS = 15_000;
 
 // Trim limits (brief §Result handling).
@@ -64,7 +72,7 @@ export function createBraveProvider(apiKey: string): SearchProvider {
     id: 'brave',
     async search(query: string, opts: { maxResults: number }): Promise<SearchResult[]> {
       const count = Math.min(opts.maxResults, MAX_RESULTS);
-      const url = `${ENDPOINT}?q=${encodeURIComponent(query)}&count=${count}`;
+      const url = `${endpoint()}?q=${encodeURIComponent(query)}&count=${count}`;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
       let res: Response;

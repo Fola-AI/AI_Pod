@@ -51,6 +51,10 @@ export interface WebSearchConfig {
   maxSearchesPerTurn: number; // Default 2, hard cap 3
   maxSearchesPerSession: number; // Default 25
   resultsPerSearch: number; // Shared mode, default 5
+  // Force one search on each agent's first substantive turn so tool-shy models
+  // still ground (equal footing). Default true; off to let propensity vary and
+  // to keep opening position-statements plain. Shared mode only. (B-5.5)
+  forceFirstSearch?: boolean;
   researchPack?: boolean; // Optional pre-turn topic brief (B-5.5)
 }
 

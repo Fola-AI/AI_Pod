@@ -33,6 +33,7 @@ describe('search mode defaults', () => {
     expect(cfg.webSearch.mode).toBe('shared');
     expect(cfg.webSearch.maxSearchesPerSession).toBe(25);
     expect(cfg.webSearch.resultsPerSearch).toBe(5);
+    expect(cfg.webSearch.forceFirstSearch).toBe(true);
   });
 });
 

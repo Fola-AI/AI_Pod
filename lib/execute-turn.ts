@@ -250,11 +250,12 @@ export async function executeTurn(
       const priorFullTurns = priorTurns.some(
         (t) => t.speakerId === plan.speakerId && t.turnClass === 'full',
       );
+      const forceFirstOn = config.webSearch?.forceFirstSearch !== false; // default on
       const budget = {
         perTurn: Math.min(3, config.webSearch?.maxSearchesPerTurn ?? 2),
         resultsPerSearch: config.webSearch?.resultsPerSearch ?? 5,
         sessionRemaining: sharedRemaining,
-        forceFirst: !priorFullTurns,
+        forceFirst: forceFirstOn && !priorFullTurns,
       };
       const outcome = await withRetry(() => runSharedSearchLoop(adapter, base, budget));
       return { result: outcome.result, searches: outcome.searches, degraded: outcome.degraded };
