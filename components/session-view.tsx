@@ -540,8 +540,8 @@ export function SessionView({ initial }: { initial: Session }) {
               words
               {voicePass.failed > 0 &&
                 ` · ${voicePass.failed} turn(s) left untagged (tagger altered the words)`}
-              . Set stability to Creative or Natural in ElevenLabs — Robust
-              ignores tags.
+. Set ElevenLabs stability to <strong>Natural</strong> (Creative
+              overacts; Robust ignores tags).
             </p>
           )}
         </div>

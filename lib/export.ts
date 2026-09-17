@@ -79,10 +79,11 @@ export function toElevenLabsScript(session: Session): string {
   return JSON.stringify(
     {
       title: config.title,
-      // v3 audio tags only register on Creative or Natural stability. Robust
-      // ignores directional prompts. Do not use SSML <break> tags (unsupported).
-      stability: 'Creative or Natural (Robust ignores tags)',
-      note: 'Audio tags register only at Creative/Natural stability. No SSML break tags — v3 does not support them.',
+      // Set ElevenLabs stability to Natural: it sounds most realistic. Creative
+      // overacts; Robust ignores directional prompts. Tags register at Natural
+      // or Creative. Do not use SSML <break> tags (unsupported in v3).
+      stability: 'Natural (recommended)',
+      note: 'Set ElevenLabs stability to Natural — it is the most realistic; Creative overacts and Robust ignores tags. No SSML break tags — v3 does not support them.',
       dialogue,
     },
     null,

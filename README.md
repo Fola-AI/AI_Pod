@@ -77,6 +77,20 @@ does not abort a session — its state is saved and its status stays `running`; 
 Dashboard shows it with a **Resume** control that reopens it and continues from
 the last saved turn. Generation simply pauses while no tab is driving it.
 
+## Voice pass (ElevenLabs v3)
+
+After a session completes, **Voice pass** tags the transcript with ElevenLabs v3
+performance cues. Tags are stored per turn as `taggedText`, never overwriting
+`text`; every tagged turn is verified so the spoken words are never altered. Run
+it on a frontier tagger (e.g. Claude Opus) — a smaller model collapses the tag
+vocabulary to `[pauses]`.
+
+**Recommended ElevenLabs stability: `Natural`.** Natural sounds the most
+realistic; **Creative overacts**, and **Robust ignores** the tags entirely. This
+was confirmed by synthesis and should not be re-litigated. The **ElevenLabs
+script** export carries this note, and v3 does not support SSML `<break>` tags —
+use `[pauses]` instead.
+
 ## Build status
 
 Phase 1 (core loop) is implemented: registry + Anthropic/OpenAI/Google adapters,
