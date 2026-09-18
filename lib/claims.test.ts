@@ -59,6 +59,65 @@ describe('parseExtraction', () => {
   });
 
   it('returns empty on garbage', () => {
-    expect(parseExtraction('not json')).toEqual({ claims: [], conflicts: [] });
+    expect(parseExtraction('not json')).toEqual({
+      claims: [],
+      conflicts: [],
+      blockingWarnings: [],
+    });
+  });
+});
+
+describe('parseExtraction unit errors + blocking warnings (B-6)', () => {
+  it('maps unitErrors into conflicts with kind "unit" and a note', () => {
+    const text = JSON.stringify({
+      claims: [],
+      conflicts: [],
+      unitErrors: [
+        {
+          quantity: 'India solar generation 2025',
+          values: [
+            { value: '164 TWh (spoken)', speaker: 'Gwen', turnIndex: 14 },
+            { value: '164.5 GWh (correct)', turnIndex: 14 },
+          ],
+          note: '164,542 MWh = 164.5 GWh, not 164 TWh',
+        },
+      ],
+      blockingWarnings: [],
+    });
+    const { conflicts } = parseExtraction(text);
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].kind).toBe('unit');
+    expect(conflicts[0].note).toMatch(/164.5 GWh/);
+  });
+
+  it('parses blocking warnings', () => {
+    const text = JSON.stringify({
+      claims: [],
+      conflicts: [],
+      unitErrors: [],
+      blockingWarnings: [
+        {
+          message: 'The 1.4% curtailment figure the episode rests on was retracted in the closing.',
+          figure: '1.4% curtailment',
+          turnIndex: 22,
+          citedBy: ['Otis', 'Lara', 'Deepa'],
+        },
+      ],
+    });
+    const { blockingWarnings } = parseExtraction(text);
+    expect(blockingWarnings).toHaveLength(1);
+    expect(blockingWarnings[0].citedBy).toEqual(['Otis', 'Lara', 'Deepa']);
+    expect(blockingWarnings[0].turnIndex).toBe(22);
+  });
+
+  it('value conflicts get kind "value"', () => {
+    const text = JSON.stringify({
+      claims: [],
+      conflicts: [
+        { quantity: 'x', values: [{ value: '452 GW' }, { value: '582 GW' }] },
+      ],
+    });
+    const { conflicts } = parseExtraction(text);
+    expect(conflicts[0].kind).toBe('value');
   });
 });

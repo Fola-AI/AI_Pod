@@ -1,6 +1,7 @@
 // Client-side API helpers.
 
 import type {
+  BlockingWarning,
   Character,
   Claim,
   ClaimConflict,
@@ -12,7 +13,7 @@ import type {
 import type { SessionSummary } from '@/lib/db/queries';
 import type { ProviderId } from '@/lib/types';
 
-export type { Claim, ClaimConflict };
+export type { Claim, ClaimConflict, BlockingWarning };
 
 export interface ApiError extends Error {
   status?: number;
@@ -207,14 +208,20 @@ export async function deleteTurn(
   return jsonOrThrow(res);
 }
 
-export async function extractClaims(
-  sessionId: string,
-): Promise<{ claims: Claim[]; conflicts: ClaimConflict[] }> {
+export async function extractClaims(sessionId: string): Promise<{
+  claims: Claim[];
+  conflicts: ClaimConflict[];
+  blockingWarnings: BlockingWarning[];
+}> {
   const res = await fetch(`/api/sessions/${sessionId}/claims`, {
     method: 'POST',
   });
   const data = await jsonOrThrow(res);
-  return { claims: data.claims ?? [], conflicts: data.conflicts ?? [] };
+  return {
+    claims: data.claims ?? [],
+    conflicts: data.conflicts ?? [],
+    blockingWarnings: data.blockingWarnings ?? [],
+  };
 }
 
 export interface PreflightCheck {

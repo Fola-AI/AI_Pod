@@ -12,6 +12,7 @@ import {
   index,
 } from 'drizzle-orm/pg-core';
 import type {
+  BlockingWarning,
   Claim,
   ClaimConflict,
   ColdOpen,
@@ -31,6 +32,7 @@ export const sessions = pgTable('sessions', {
   totalCostUsd: doublePrecision('total_cost_usd').notNull().default(0),
   claims: jsonb('claims').$type<Claim[]>(),
   claimConflicts: jsonb('claim_conflicts').$type<ClaimConflict[]>(),
+  blockingWarnings: jsonb('blocking_warnings').$type<BlockingWarning[]>(),
   coldOpen: jsonb('cold_open').$type<ColdOpen>(),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()

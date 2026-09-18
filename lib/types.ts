@@ -263,8 +263,22 @@ export interface Claim {
 // dangerous thing to publish unnoticed. The checklist flags these with both (or
 // all) conflicting values and their turn indices.
 export interface ClaimConflict {
+  // 'value' = sources genuinely disagree; 'unit' = a wrong unit / order-of-
+  // magnitude error, which is always wrong, never a legitimate difference (B-6).
+  kind?: 'value' | 'unit';
   quantity: string; // What the values are measuring, e.g. "solar capacity added in 2024"
   values: { value: string; speaker?: string; turnIndex?: number }[];
+  note?: string; // For a unit error: what the conversion should have been
+}
+
+// A blocking, publish-stopping problem surfaced above the claims list (B-6): a
+// figure the episode leaned on (cited by 2+ speakers) that was retracted or
+// corrected in a closing turn, with nothing after it to absorb the change.
+export interface BlockingWarning {
+  message: string;
+  figure?: string;
+  turnIndex?: number; // where it was retracted/corrected
+  citedBy?: string[]; // speakers who cited it earlier
 }
 
 export interface Session {
@@ -275,7 +289,8 @@ export interface Session {
   totalWords: number;
   totalCostUsd: number;
   claims?: Claim[]; // Persisted after extraction; included in the JSON export
-  claimConflicts?: ClaimConflict[]; // Conflicting values for the same quantity
+  claimConflicts?: ClaimConflict[]; // Conflicting values + unit errors (B-6)
+  blockingWarnings?: BlockingWarning[]; // Publish-stopping problems (B-6)
   coldOpen?: ColdOpen; // Best 15-30s clip candidate (B-6, A-7)
   createdAt: string;
   completedAt?: string;

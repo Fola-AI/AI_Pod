@@ -50,6 +50,7 @@ function rowToSession(s: SessionRow, ts: TurnRow[]): Session {
     totalCostUsd: s.totalCostUsd,
     claims: s.claims ?? undefined,
     claimConflicts: s.claimConflicts ?? undefined,
+    blockingWarnings: s.blockingWarnings ?? undefined,
     coldOpen: s.coldOpen ?? undefined,
     createdAt:
       s.createdAt instanceof Date ? s.createdAt.toISOString() : String(s.createdAt),
@@ -187,15 +188,16 @@ export async function setSessionColdOpen(
   await db.update(sessions).set({ coldOpen }).where(eq(sessions.id, id));
 }
 
-/** Persist the extracted claims checklist (and any value conflicts) for a session. */
+/** Persist the claims checklist, conflicts/unit-errors, and blocking warnings. */
 export async function setSessionClaims(
   id: string,
   claims: Claim[],
   claimConflicts: ClaimConflict[] = [],
+  blockingWarnings: import('@/lib/types').BlockingWarning[] = [],
 ): Promise<void> {
   await db
     .update(sessions)
-    .set({ claims, claimConflicts })
+    .set({ claims, claimConflicts, blockingWarnings })
     .where(eq(sessions.id, id));
 }
 

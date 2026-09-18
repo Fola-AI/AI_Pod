@@ -40,3 +40,29 @@ describe('validateTurn meta-commentary detection', () => {
     });
   });
 });
+
+describe('validateTurn meta-commentary — broadened (B-6)', () => {
+  const leaks = [
+    'I need to reckon with what I found. The Wikipedia source says solar was 8 percent.',
+    'Let me recalculate and speak honestly about what changed.',
+    'The IEA source says the figure is higher than I thought.',
+    'My sources point the other way, so hold on.',
+    'Let me recheck that number before I commit to it.',
+  ];
+  for (const t of leaks) {
+    it(`flags: "${t.slice(0, 42)}…"`, () => {
+      expect(validateTurn(t, 'complete')).toEqual({ valid: false, reason: 'meta' });
+    });
+  }
+  const clean = [
+    'According to Reuters, solar hit a record last year.',
+    'The primary source of new demand is data centres, plainly.',
+    'Let me be clear about what is at stake here.',
+    'I need to push back on that framing, hard.',
+  ];
+  for (const t of clean) {
+    it(`passes: "${t.slice(0, 42)}…"`, () => {
+      expect(validateTurn(t, 'complete')).toEqual({ valid: true });
+    });
+  }
+});

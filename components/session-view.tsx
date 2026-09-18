@@ -25,6 +25,7 @@ import {
   runColdOpen,
   type Claim,
   type ClaimConflict,
+  type BlockingWarning,
   type ApiError,
   type PreflightCheck,
   type VoicePassResponse,
@@ -220,6 +221,9 @@ export function SessionView({ initial }: { initial: Session }) {
   const [conflicts, setConflicts] = useState<ClaimConflict[]>(
     initial.claimConflicts ?? [],
   );
+  const [blockingWarnings, setBlockingWarnings] = useState<BlockingWarning[]>(
+    initial.blockingWarnings ?? [],
+  );
   const [claimsLoading, setClaimsLoading] = useState(false);
   const [checked, setChecked] = useState<Record<number, boolean>>({});
   const [coldOpen, setColdOpen] = useState<ColdOpen | null>(initial.coldOpen ?? null);
@@ -265,12 +269,19 @@ export function SessionView({ initial }: { initial: Session }) {
   async function handleExtractClaims() {
     setClaimsLoading(true);
     try {
-      const { claims: c, conflicts: cf } = await extractClaims(initial.id);
+      const { claims: c, conflicts: cf, blockingWarnings: bw } = await extractClaims(
+        initial.id,
+      );
       setClaims(c);
       setConflicts(cf);
-      if (cf.length > 0) {
+      setBlockingWarnings(bw);
+      if (bw.length > 0) {
+        toast.error(
+          `${bw.length} publish-blocking ${bw.length === 1 ? 'issue' : 'issues'} — see the top of the checklist.`,
+        );
+      } else if (cf.length > 0) {
         toast.warning(
-          `${cf.length} conflicting ${cf.length === 1 ? 'value' : 'values'} found — check before publishing.`,
+          `${cf.length} ${cf.length === 1 ? 'issue' : 'issues'} flagged — check before publishing.`,
         );
       } else if (c.length === 0) {
         toast.info('No checkable claims found.');
@@ -632,29 +643,80 @@ export function SessionView({ initial }: { initial: Session }) {
                   : 'Extract claims'}
             </Button>
           </div>
-          {conflicts.length > 0 && (
-            <div className="mb-3 rounded-md border border-amber-500/50 bg-amber-500/10 p-3">
-              <p className="mb-2 text-sm font-medium text-amber-700 dark:text-amber-400">
-                ⚠ {conflicts.length} conflicting{' '}
-                {conflicts.length === 1 ? 'value' : 'values'} — resolve before publishing
+          {blockingWarnings.length > 0 && (
+            <div className="mb-3 rounded-md border-2 border-destructive/60 bg-destructive/10 p-3">
+              <p className="mb-2 text-sm font-semibold text-destructive">
+                ⛔ Do not publish — {blockingWarnings.length} blocking{' '}
+                {blockingWarnings.length === 1 ? 'issue' : 'issues'}
               </p>
               <ul className="space-y-2">
-                {conflicts.map((cf, i) => (
+                {blockingWarnings.map((w, i) => (
                   <li key={i} className="text-sm">
-                    <span className="font-medium">{cf.quantity}:</span>{' '}
-                    {cf.values.map((v, j) => (
-                      <span key={j}>
-                        {j > 0 && <span className="text-amber-600"> vs </span>}
-                        {v.value}
-                        {v.turnIndex != null && (
-                          <span className="text-muted-foreground">
-                            {' '}({v.speaker ? `${v.speaker}, ` : ''}turn #{v.turnIndex})
-                          </span>
-                        )}
+                    {w.message}
+                    {(w.figure || w.turnIndex != null || w.citedBy?.length) && (
+                      <span className="block text-xs text-muted-foreground">
+                        {w.figure && `${w.figure} · `}
+                        {w.turnIndex != null && `retracted at turn #${w.turnIndex}`}
+                        {w.citedBy?.length ? ` · earlier cited by ${w.citedBy.join(', ')}` : ''}
                       </span>
-                    ))}
+                    )}
                   </li>
                 ))}
+              </ul>
+            </div>
+          )}
+          {conflicts.filter((c) => c.kind === 'unit').length > 0 && (
+            <div className="mb-3 rounded-md border border-destructive/50 bg-destructive/5 p-3">
+              <p className="mb-2 text-sm font-medium text-destructive">
+                ✕ Unit / order-of-magnitude errors (always wrong)
+              </p>
+              <ul className="space-y-2">
+                {conflicts
+                  .filter((c) => c.kind === 'unit')
+                  .map((cf, i) => (
+                    <li key={i} className="text-sm">
+                      <span className="font-medium">{cf.quantity}:</span>{' '}
+                      {cf.values.map((v, j) => (
+                        <span key={j}>
+                          {j > 0 && <span className="text-destructive"> → </span>}
+                          {v.value}
+                          {v.turnIndex != null && (
+                            <span className="text-muted-foreground">
+                              {' '}({v.speaker ? `${v.speaker}, ` : ''}turn #{v.turnIndex})
+                            </span>
+                          )}
+                        </span>
+                      ))}
+                      {cf.note && <span className="block text-xs text-muted-foreground">{cf.note}</span>}
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          )}
+          {conflicts.filter((c) => c.kind !== 'unit').length > 0 && (
+            <div className="mb-3 rounded-md border border-amber-500/50 bg-amber-500/10 p-3">
+              <p className="mb-2 text-sm font-medium text-amber-700 dark:text-amber-400">
+                ⚠ Conflicting values — resolve before publishing
+              </p>
+              <ul className="space-y-2">
+                {conflicts
+                  .filter((c) => c.kind !== 'unit')
+                  .map((cf, i) => (
+                    <li key={i} className="text-sm">
+                      <span className="font-medium">{cf.quantity}:</span>{' '}
+                      {cf.values.map((v, j) => (
+                        <span key={j}>
+                          {j > 0 && <span className="text-amber-600"> vs </span>}
+                          {v.value}
+                          {v.turnIndex != null && (
+                            <span className="text-muted-foreground">
+                              {' '}({v.speaker ? `${v.speaker}, ` : ''}turn #{v.turnIndex})
+                            </span>
+                          )}
+                        </span>
+                      ))}
+                    </li>
+                  ))}
               </ul>
             </div>
           )}

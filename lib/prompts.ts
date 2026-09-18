@@ -175,6 +175,10 @@ Evidence
   manufacture statistics, studies, quotes, or dates.
 - When you cite a figure, say where it comes from and roughly when, in
   spoken form: "the World Bank put that at about X last year."
+- Prefer primary and institutional sources — agencies, regulators,
+  statistical offices, peer-reviewed work. If your only source is an
+  encyclopedia, aggregator, or content farm, say the figure is uncertain
+  rather than stating it plainly.
 - Prefer one concrete, checkable fact over three abstract assertions.
 
 Length and delivery
