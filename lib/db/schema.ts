@@ -71,5 +71,21 @@ export const turns = pgTable(
   (t) => [index('turns_session_idx').on(t.sessionId, t.index)],
 );
 
+// Persona library (B-6). Previously code-only in lib/personas.ts; moved here so
+// personas can be tuned without a deploy. The built-in seven are seeded on first
+// run (idempotent, only when empty) with isBuiltIn = true; edits are never
+// overwritten. Sessions snapshot a persona's text at creation, so editing a row
+// here never changes a past session.
+export const personas = pgTable('personas', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  shortDescription: text('short_description').notNull().default(''),
+  systemPromptFragment: text('system_prompt_fragment').notNull().default(''),
+  speakingStyle: text('speaking_style').notNull().default(''),
+  isBuiltIn: boolean('is_built_in').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export type SessionRow = typeof sessions.$inferSelect;
 export type TurnRow = typeof turns.$inferSelect;
+export type PersonaRow = typeof personas.$inferSelect;

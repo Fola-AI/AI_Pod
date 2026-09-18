@@ -391,7 +391,7 @@ export function SessionView({ initial }: { initial: Session }) {
           <span>·</span>
           {config.agents.map((a) => (
             <span key={a.id}>
-              {a.displayName} ({getPersona(a.personaId)?.name},{' '}
+              {a.displayName} ({a.personaSnapshot?.name ?? getPersona(a.personaId)?.name},{' '}
               {getModel(a.modelId)?.displayName})
             </span>
           ))}

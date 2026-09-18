@@ -32,7 +32,7 @@ import {
   modelSupportsFunctionCalling,
   providerSupportsWebSearch,
 } from '@/config/models';
-import { BUILT_IN_PERSONAS } from '@/lib/personas';
+import type { Persona } from '@/lib/types';
 import { FORMAT_LIST, FORMATS, isStanceBearing } from '@/lib/formats';
 import type { ProviderId, SessionFormat, SessionConfig } from '@/lib/types';
 
@@ -58,7 +58,7 @@ function agentGroundingState(
     ? { ok: true, label: 'Searches via the shared web tool' }
     : { ok: false, label: "Research pack — this model can't call tools" };
 }
-import { createSession, fetchProviders } from '@/lib/client';
+import { createSession, fetchProviders, fetchPersonas } from '@/lib/client';
 import { estimateSessionCost, formatUsd } from '@/lib/cost';
 import { PRESETS } from '@/lib/presets';
 
@@ -136,11 +136,15 @@ export default function NewSessionPage() {
 
   type ProviderStatus = Awaited<ReturnType<typeof fetchProviders>>;
   const [providers, setProviders] = useState<ProviderStatus | null>(null);
+  const [personas, setPersonas] = useState<Persona[]>([]);
 
   useEffect(() => {
     fetchProviders()
       .then(setProviders)
       .catch(() => setProviders(null));
+    fetchPersonas()
+      .then(setPersonas)
+      .catch(() => setPersonas([]));
   }, []);
 
   function addSource() {
@@ -519,13 +523,13 @@ export default function NewSessionPage() {
                     <SelectTrigger>
                       <SelectValue>
                         {(v) =>
-                          BUILT_IN_PERSONAS.find((p) => p.id === v)?.name ??
+                          personas.find((p) => p.id === v)?.name ??
                           'Select'
                         }
                       </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
-                      {BUILT_IN_PERSONAS.map((p) => (
+                      {personas.map((p) => (
                         <SelectItem key={p.id} value={p.id}>
                           {p.name}
                         </SelectItem>

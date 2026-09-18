@@ -103,10 +103,22 @@ export interface Persona {
   isBuiltIn: boolean;
 }
 
+// A persona's content captured at session-creation time (B-6). Stored on the
+// agent ALONGSIDE personaId, so a session replays from exactly the text it was
+// given and edits to the live persona never rewrite past transcripts — and the
+// operator can still see which persona was used and how it has since drifted.
+export interface PersonaSnapshot {
+  name: string;
+  shortDescription: string;
+  systemPromptFragment: string;
+  speakingStyle: string;
+}
+
 export interface AgentConfig {
   id: string;
   displayName: string; // Operator's character name, e.g. "Lara"
-  personaId: string; // FK into persona library
+  personaId: string; // FK into persona library (which persona was chosen)
+  personaSnapshot?: PersonaSnapshot; // Persona content at creation (B-6); replay/provenance
   modelId: string; // FK into model registry
   stance?: string; // Debate / hot-seat only
   temperature: number; // Default 0.85

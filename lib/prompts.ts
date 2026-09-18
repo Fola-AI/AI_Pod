@@ -40,7 +40,10 @@ export function buildAgentSystemPrompt(
     researchPack?: string;
   } = {},
 ): string {
-  const persona = getPersona(agent.personaId);
+  // Prefer the snapshot captured at session creation (B-6): the session replays
+  // from exactly the persona text it was given, regardless of later edits. Fall
+  // back to the code persona for sessions created before the snapshot existed.
+  const persona = agent.personaSnapshot ?? getPersona(agent.personaId);
   const framing = getFormatFraming(config.format);
   const source = renderSourceMaterial(config.sourceMaterial);
 
@@ -167,7 +170,7 @@ export function buildModeratorSystemPrompt(config: SessionConfig): string {
 
   const participants = config.agents
     .map((a) => {
-      const persona = getPersona(a.personaId);
+      const persona = a.personaSnapshot ?? getPersona(a.personaId);
       return `${a.displayName} — ${persona?.shortDescription ?? ''}`;
     })
     .join('\n');

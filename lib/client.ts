@@ -1,6 +1,6 @@
 // Client-side API helpers.
 
-import type { Claim, ClaimConflict, Session, Turn } from '@/lib/types';
+import type { Claim, ClaimConflict, Persona, Session, Turn } from '@/lib/types';
 import type { SessionSummary } from '@/lib/db/queries';
 import type { ProviderId } from '@/lib/types';
 
@@ -46,6 +46,12 @@ export async function fetchProviders(): Promise<{
 }> {
   const res = await fetch('/api/providers', { cache: 'no-store' });
   return jsonOrThrow(res);
+}
+
+export async function fetchPersonas(): Promise<Persona[]> {
+  const res = await fetch('/api/personas', { cache: 'no-store' });
+  const data = await jsonOrThrow(res);
+  return data.personas ?? [];
 }
 
 export async function createSession(payload: unknown): Promise<Session> {

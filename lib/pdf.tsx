@@ -48,7 +48,7 @@ function DebateDocument({ session }: { session: Session }) {
         <Text style={styles.rosterHeading}>Roster</Text>
         {config.agents.map((a) => (
           <Text key={a.id} style={styles.rosterLine}>
-            {a.displayName} — {getPersona(a.personaId)?.name ?? a.personaId} —{' '}
+            {a.displayName} — {a.personaSnapshot?.name ?? getPersona(a.personaId)?.name ?? a.personaId} —{' '}
             {getModel(a.modelId)?.displayName ?? a.modelId}
           </Text>
         ))}

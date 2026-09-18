@@ -6,6 +6,7 @@ import {
   validateReferences,
 } from '@/lib/validation';
 import { hasSearchKey, preflightSearch } from '@/lib/search';
+import { attachPersonaSnapshots } from '@/lib/db/personas';
 import { buildResearchPack } from '@/lib/search/research-pack';
 import { modelSupportsFunctionCalling } from '@/config/models';
 
@@ -69,6 +70,9 @@ export async function POST(request: Request) {
 
   try {
     const config = toSessionConfig(parsed.data);
+    // Snapshot each agent's persona text now, so the session replays from what
+    // it was given and later persona edits never rewrite this transcript (B-6).
+    await attachPersonaSnapshots(config);
     // Build the research brief before turn 1 when the session needs it.
     if (wantsResearchPack) {
       const pack = await buildResearchPack(config.topic, {

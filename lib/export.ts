@@ -11,7 +11,7 @@ export const DISCLOSURE_FOOTER =
 
 function rosterLines(session: Session): string[] {
   const lines = session.config.agents.map((a) => {
-    const persona = getPersona(a.personaId);
+    const persona = a.personaSnapshot ?? getPersona(a.personaId);
     const model = getModel(a.modelId);
     return `- ${a.displayName} — ${persona?.name ?? a.personaId} — ${
       model?.displayName ?? a.modelId
@@ -101,7 +101,7 @@ export function toSpeakerManifest(session: Session): string {
     `Date: ${date} · Format: ${formatLabel} · ${config.agentCount} participants`,
     '',
     ...config.agents.map((a) => {
-      const persona = getPersona(a.personaId);
+      const persona = a.personaSnapshot ?? getPersona(a.personaId);
       const model = getModel(a.modelId);
       const base = `${a.displayName.padEnd(10)}${(persona?.name ?? '').padEnd(20)}${(
         model?.displayName ?? a.modelId
