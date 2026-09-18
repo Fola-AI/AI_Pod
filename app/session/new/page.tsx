@@ -281,6 +281,10 @@ export default function NewSessionPage() {
     setFormat(preset.format);
     setTargetWordCount(preset.targetWordCount);
     setInterjectionFrequency(preset.interjectionFrequency);
+    // B-7: presets may also set the conversational-texture switches.
+    if (preset.interjectionRate !== undefined) setInterjectionRate(preset.interjectionRate);
+    if (preset.openingBanter !== undefined) setOpeningBanter(preset.openingBanter);
+    if (preset.webSearchMode !== undefined) setSearchMode(preset.webSearchMode);
     setAgents(
       preset.agents.map((pa, i) => ({
         ...makeAgent(i),

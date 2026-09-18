@@ -58,6 +58,13 @@ import {
 } from '@/lib/export';
 import { MODERATOR_ID } from '@/lib/orchestrator';
 
+function formatDuration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+}
+
 function download(filename: string, content: string, type = 'text/plain') {
   const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
@@ -96,6 +103,21 @@ export function SessionView({ initial }: { initial: Session }) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [turns.length]);
+
+  // Elapsed wall-clock over the transcript (first turn → last turn, ticking to
+  // now while running). Visible, never enforced (B-7).
+  const [nowTick, setNowTick] = useState(Date.now());
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [running]);
+  const firstTurnAt = turns[0]?.createdAt;
+  const lastTurnAt = turns[turns.length - 1]?.createdAt;
+  const elapsedMs = firstTurnAt
+    ? (running ? nowTick : new Date(lastTurnAt ?? firstTurnAt).getTime()) -
+      new Date(firstTurnAt).getTime()
+    : 0;
 
   const runLoop = useCallback(async () => {
     if (runningRef.current) return;
@@ -454,6 +476,11 @@ export function SessionView({ initial }: { initial: Session }) {
             {totalWords.toLocaleString()} / {config.targetWordCount.toLocaleString()} words ({targetPct}%)
           </span>
           <span>{formatUsd(totalCostUsd)}</span>
+          {firstTurnAt && (
+            <span title="Elapsed wall-clock (first turn → now)">
+              ⏱ {formatDuration(elapsedMs)}
+            </span>
+          )}
           {totalSearches > 0 && (
             <span title="Web searches (billed separately from tokens)">
               🔎 {totalSearches}
