@@ -1,5 +1,9 @@
-import { describe, it, expect } from 'vitest';
-import { planNextTurn } from './orchestrator';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import {
+  planNextTurn,
+  estimateEligibleSlots,
+  interjectionProbability,
+} from './orchestrator';
 import type { AgentConfig, SessionConfig, Turn } from './types';
 
 function agent(id: string, name: string): AgentConfig {
@@ -158,5 +162,58 @@ describe('moderator-directed routing', () => {
     // standardCount = 1 -> rotation pick is agents[1 % 3] = Kimi
     expect(plan.speakerId).toBe('a2');
     expect(plan.instructionOpts.moderatorDirected).toBeFalsy();
+  });
+});
+
+describe('interjection count-targeting (B-6)', () => {
+  afterEach(() => vi.restoreAllMocks());
+  const medium = { ...config, interjectionRate: 'medium' as const };
+
+  it('estimates more eligible slots for a longer episode', () => {
+    const short = estimateEligibleSlots({ ...medium, targetWordCount: 1200 });
+    const long = estimateEligibleSlots({ ...medium, targetWordCount: 2600 });
+    expect(long).toBeGreaterThan(short);
+    expect(short).toBeGreaterThanOrEqual(medium.agentCount);
+  });
+
+  it('probability is 0 when off, and 0 once the target is met', () => {
+    expect(interjectionProbability({ ...config, interjectionRate: 'off' }, [])).toBe(0);
+    // Fabricate enough stored interjections to meet the medium target (5).
+    const done = Array.from({ length: 5 }, () =>
+      turn('a1', 'Lara', 'standard', 'react'),
+    ).map((t) => ({ ...t, turnClass: 'interjection' as const }));
+    expect(interjectionProbability(medium, done)).toBe(0);
+  });
+
+  it('probability rises as the round fills up (self-correcting on word progress)', () => {
+    const words = Array.from({ length: 100 }, () => 'word').join(' ');
+    const early = interjectionProbability(medium, baseTurns()); // little said yet
+    // Many word-bearing standard turns → close to the round target → catch up.
+    const many = [
+      ...baseTurns(),
+      ...Array.from({ length: 12 }, () => turn('a1', 'Lara', 'standard', words)),
+    ];
+    expect(interjectionProbability(medium, many)).toBeGreaterThan(early);
+  });
+
+  it('an interjection can follow an OPENING turn (openings now eligible)', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0); // force the roll + pick
+    const turns = [
+      turn('moderator', 'Moderator', 'moderator-opening', 'Welcome.'),
+      turn('a1', 'Lara', 'opening', 'My opening position.'),
+    ];
+    const plan = planNextTurn(medium, turns, {})!;
+    expect(plan.turnClass).toBe('interjection');
+    expect(plan.speakerId).not.toBe('a1'); // reactor is not the last speaker
+  });
+
+  it('does not interject during the completion re-plan (suppressed)', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const turns = [
+      turn('moderator', 'Moderator', 'moderator-opening', 'Welcome.'),
+      turn('a1', 'Lara', 'opening', 'My opening position.'),
+    ];
+    const plan = planNextTurn(medium, turns, { suppressInterjection: true })!;
+    expect(plan.turnClass).not.toBe('interjection');
   });
 });

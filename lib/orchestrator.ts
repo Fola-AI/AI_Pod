@@ -24,13 +24,93 @@ const INTERJECTION_EVERY: Record<
   high: 2,
 };
 
-// Probability of inserting an agent reaction interjection after a full turn (A-1).
-const INTERJECTION_PROBABILITY: Record<InterjectionRate, number> = {
+// Target number of agent reaction interjections per SESSION (A-1, B-6 fix).
+// A per-slot probability collapsed to ~0-1 on short rounds; we target a count
+// instead and derive an adaptive probability, so the rate holds independent of
+// episode length.
+const INTERJECTION_TARGET: Record<InterjectionRate, number> = {
   off: 0,
-  low: 0.25,
-  medium: 0.5, // ~1 interjection per 2 full turns
-  high: 0.75,
+  low: 2,
+  medium: 5,
+  high: 9,
 };
+
+// Estimate how many turns in this session can be *followed* by an interjection
+// (openings + standard turns; closings and moderator/banter turns cannot).
+// Derived from the word budget so it scales with episode length.
+export function estimateEligibleSlots(config: SessionConfig): number {
+  const N = config.agentCount;
+  const avgWords =
+    config.agents.reduce((s, a) => s + a.maxWordsPerTurn, 0) / N || 120;
+  const reservedForClosings = N * avgWords + 90;
+  const roundTargetWords = Math.max(
+    config.targetWordCount * 0.55,
+    config.targetWordCount - reservedForClosings,
+  );
+  const openingWords = N * avgWords;
+  const estStandards = Math.max(0, Math.round((roundTargetWords - openingWords) / avgWords));
+  return N + estStandards; // N openings + estimated standard turns
+}
+
+// Adaptive probability that an interjection follows this eligible turn, aiming
+// to hit the session target evenly. Remaining slots are estimated LIVE from word
+// progress toward the round target (not a fixed slot count), so the rate
+// self-corrects when turns run longer or shorter than planned and doesn't bias
+// low on a run that overshoots the word budget.
+export function interjectionProbability(config: SessionConfig, turns: Turn[]): number {
+  const target = INTERJECTION_TARGET[config.interjectionRate ?? 'medium'];
+  if (target <= 0) return 0;
+  const done = turns.filter((t) => t.turnClass === 'interjection').length;
+  const remainingTarget = target - done;
+  if (remainingTarget <= 0) return 0;
+
+  const N = config.agentCount;
+  const avgWords =
+    config.agents.reduce((s, a) => s + a.maxWordsPerTurn, 0) / N || 120;
+  const reservedForClosings = N * avgWords + 90;
+  const roundTargetWords = Math.max(
+    config.targetWordCount * 0.55,
+    config.targetWordCount - reservedForClosings,
+  );
+  const openingsRemaining = Math.max(
+    0,
+    N - turns.filter((t) => t.turnType === 'opening').length,
+  );
+  // Words per agent turn, using the ACTUAL average seen so far (models routinely
+  // overshoot maxWordsPerTurn), so we don't over- or under-count remaining turns.
+  const substantive = turns.filter(
+    (t) =>
+      t.turnClass !== 'interjection' &&
+      (t.turnType === 'opening' || t.turnType === 'standard'),
+  );
+  const observedAvg = substantive.length
+    ? substantive.reduce((s, t) => s + countWords(t.text), 0) / substantive.length
+    : avgWords;
+  const perTurn = Math.max(avgWords, observedAvg);
+
+  // Estimate the TOTAL standard turns the round will hold, then subtract those
+  // done. Only openings + standards are eligible for a following interjection,
+  // but openings and short moderator interjections also consume the word budget,
+  // so we fold the moderator's cadence into the per-standard word cost — without
+  // this the eligible-slot count is inflated and the rate biases low.
+  const modWords = 55; // typical moderator interjection length
+  const modEvery = INTERJECTION_EVERY[config.moderator.interjectionFrequency];
+  const wordsPerStandard = perTurn + modWords / modEvery;
+  const totalStandards = Math.max(
+    0,
+    (roundTargetWords - N * perTurn) / wordsPerStandard,
+  );
+  const standardsDone = turns.filter(
+    (t) => t.turnType === 'standard' && t.turnClass !== 'interjection',
+  ).length;
+  const remainingStandards = Math.max(0, Math.round(totalStandards - standardsDone));
+  // Bias the remaining-slot estimate DOWN (models overshoot the word cap, so the
+  // round holds fewer standard turns than the budget implies). Overshooting the
+  // count is capped by remainingTarget above; undershooting is not — so it is
+  // safe to lean toward a higher probability here.
+  const remainingSlots = Math.max(1, Math.round((openingsRemaining + remainingStandards) * 0.7));
+  return Math.min(0.9, remainingTarget / remainingSlots);
+}
 
 export interface TurnPlan {
   speakerId: string; // agent.id or 'moderator'
@@ -142,11 +222,7 @@ function statedClosingOrder(config: SessionConfig, turns: Turn[]): AgentConfig[]
 }
 
 /** Plan a turn inside the round loop (agents rotate, moderator interjects). */
-function planRoundTurn(
-  config: SessionConfig,
-  turns: Turn[],
-  suppressInterjection = false,
-): TurnPlan {
+function planRoundTurn(config: SessionConfig, turns: Turn[]): TurnPlan {
   const last = turns[turns.length - 1];
 
   // A moderator interjection that named someone directs the next turn to them.
@@ -163,28 +239,8 @@ function planRoundTurn(
   ).length;
   const nextFullAgent = config.agents[fullStandardCount % config.agentCount];
 
-  // Agent reaction interjection (A-1): roll after a full agent turn (not after a
-  // moderator turn or another interjection). On [SKIP] the route falls through
-  // to the next full turn, so we never chain or loop.
-  const rate = config.interjectionRate ?? 'medium';
-  if (
-    !suppressInterjection &&
-    last &&
-    last.turnClass !== 'interjection' &&
-    (last.turnType === 'standard' || last.turnType === 'opening') &&
-    Math.random() < INTERJECTION_PROBABILITY[rate]
-  ) {
-    const reactor = pickInterjector(config, last.speakerId, nextFullAgent.id);
-    if (reactor) {
-      return agentPlan(
-        config,
-        reactor,
-        'standard',
-        { interjection: true },
-        { turnClass: 'interjection', maxWords: 15 },
-      );
-    }
-  }
+  // (Agent reaction interjections are handled in planNextTurn, before the phase
+  // logic, so openings are eligible too — see maybeAgentInterjection.)
 
   // Moderator interjection when due (counts full standard turns).
   const interjectionsDone = turns.filter(
@@ -271,6 +327,38 @@ function isSeatHolder(config: SessionConfig, agent: AgentConfig): boolean {
   return agent.id === config.agents[0].id;
 }
 
+// An agent reaction interjection that may follow the last turn, or null. Fires
+// after any opening or standard turn (openings included — B-6 fix), at the
+// adaptive count-targeting probability.
+function maybeAgentInterjection(
+  config: SessionConfig,
+  turns: Turn[],
+): TurnPlan | null {
+  const last = turns[turns.length - 1];
+  if (!last || last.turnClass === 'interjection') return null;
+  if (last.turnType !== 'opening' && last.turnType !== 'standard') return null;
+  if (Math.random() >= interjectionProbability(config, turns)) return null;
+
+  const N = config.agentCount;
+  const openingsDone = turns.filter((t) => t.turnType === 'opening').length;
+  const fullStandardCount = turns.filter(
+    (t) => t.turnType === 'standard' && t.turnClass !== 'interjection',
+  ).length;
+  const nextFullId =
+    openingsDone < N
+      ? config.agents[openingsDone].id
+      : config.agents[fullStandardCount % N].id;
+  const reactor = pickInterjector(config, last.speakerId, nextFullId);
+  if (!reactor) return null;
+  return agentPlan(
+    config,
+    reactor,
+    'standard',
+    { interjection: true },
+    { turnClass: 'interjection', maxWords: 15 },
+  );
+}
+
 /**
  * Compute the next turn to execute, or null if the session is complete.
  */
@@ -306,6 +394,14 @@ export function planNextTurn(
     });
   }
 
+  // Agent reaction interjection — may follow any opening or standard turn, so it
+  // is checked here (before the openings/round phases) rather than only inside
+  // the round loop. Suppressed during the completion re-plan.
+  if (!(opts.suppressInterjection ?? false)) {
+    const interjection = maybeAgentInterjection(config, turns);
+    if (interjection) return interjection;
+  }
+
   // 2. Agent openings, in order.
   const openingsDone = turns.filter((t) => t.turnType === 'opening').length;
   if (openingsDone < N) {
@@ -321,7 +417,7 @@ export function planNextTurn(
         moderatorCallClosings: true,
       });
     }
-    return planRoundTurn(config, turns, opts.suppressInterjection ?? false);
+    return planRoundTurn(config, turns);
   }
 
   // 5. Agent closing statements. Honour an order the moderator stated in the

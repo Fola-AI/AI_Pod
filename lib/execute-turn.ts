@@ -182,14 +182,16 @@ export async function executeTurn(
 
   // --- Interjection (A-1): short reaction, low token budget, [SKIP] allowed ---
   if (plan.turnClass === 'interjection') {
-    // Nudge away from repeated reactions ("Exactly." three times over).
+    // Nudge away from repeated reactions — now that interjections are more
+    // frequent, avoid the whole panel echoing "Exactly." Feed the recent
+    // interjections across all speakers (opener-variety mechanism, reused).
     const recent = priorTurns
-      .filter((t) => t.speakerId === plan.speakerId && t.turnClass === 'interjection')
-      .slice(-2)
+      .filter((t) => t.turnClass === 'interjection')
+      .slice(-3)
       .map((t) => t.text.trim());
     const nudge =
       recent.length > 0
-        ? `\n\nYou recently reacted with: ${recent.map((r) => `"${r}"`).join('; ')}. React differently or stay quiet.`
+        ? `\n\nRecent reactions in this discussion: ${recent.map((r) => `"${r}"`).join('; ')}. Say something clearly different, or stay quiet.`
         : '';
     const userMessage =
       buildTurnUserMessage(priorTurns, plan.turnType, plan.instructionOpts) +

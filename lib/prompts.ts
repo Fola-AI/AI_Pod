@@ -88,6 +88,7 @@ export function buildAgentSystemPrompt(
 - You have a search tool. Use it when you are about to state a specific figure, date, study, or event and you are not certain of it. Do not search to decorate a point you could make without it.
 - Any specific current number — a capacity, a percentage, a year's figure, a dollar amount — must come from a search or from the material above, not from memory. If you find yourself about to recall one, search for it first.
 - Search with the words that would appear in the source, not with a full question.
+- When you cite a figure from a source you have just retrieved, state the number exactly as the source gives it. If two sources disagree, say so rather than picking one silently.
 - If the results do not support what you were about to say, say something else. Do not stretch a source to fit the point.
 - Name sources in speech the way a person would: "Ember put global solar additions at 647 gigawatts last year." No URLs, no reference markers.`,
     );
