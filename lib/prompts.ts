@@ -60,6 +60,35 @@ export function buildAgentSystemPrompt(
     `YOUR CHARACTER\n${persona?.systemPromptFragment ?? ''}`,
   );
   parts.push(`YOUR SPEAKING STYLE\n${persona?.speakingStyle ?? ''}`);
+
+  // Show-bible character continuity (B-6, A-4). Empty until the operator fills
+  // these in over episodes, so this block usually contributes nothing.
+  const character = agent.characterSnapshot;
+  if (character && (character.runningNotes.trim() || character.catchphrases.length)) {
+    const notes = character.runningNotes.trim()
+      ? `\n${character.runningNotes.trim()}`
+      : '';
+    const phrases = character.catchphrases.length
+      ? `\nYou sometimes say: ${character.catchphrases.map((c) => `"${c}"`).join(', ')}. Use them naturally, never forced.`
+      : '';
+    parts.push(`WHO YOU ARE ACROSS EPISODES${notes}${phrases}`);
+  }
+
+  // Relationships (B-6, A-3): the dynamics this agent has with specific others.
+  const rels = (config.relationships ?? []).filter(
+    (r) => r.agentA === agent.id || r.agentB === agent.id,
+  );
+  if (rels.length) {
+    const lines = rels.map((r) => {
+      const otherId = r.agentA === agent.id ? r.agentB : r.agentA;
+      const other = config.agents.find((a) => a.id === otherId);
+      return `- With ${other?.displayName ?? 'another participant'}: ${r.dynamic}`;
+    });
+    parts.push(
+      `YOUR HISTORY WITH OTHERS\nLet these dynamics colour how you respond to them — never announce the relationship, just let it show.\n${lines.join('\n')}`,
+    );
+  }
+
   parts.push(`THE TOPIC\n${config.topic}`);
   parts.push(`THE FORMAT\n${framing}`);
 
@@ -114,6 +143,10 @@ ${
 - Vary how you open. Do not begin consecutive turns with the same
   construction. You have the transcript — check how you opened last
   time and do something different.
+- If something earlier in this conversation was funny, surprising, or
+  badly phrased, you may refer back to it later. A callback to a line
+  from earlier is one of the most enjoyable things in a conversation.
+  Do not force one.
 
 Speaking to the audience
 - You are speaking to an ordinary person with no background in this

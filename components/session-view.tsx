@@ -10,7 +10,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import type { Session, SessionConfig, Turn } from '@/lib/types';
+import type { ColdOpen, Session, SessionConfig, Turn } from '@/lib/types';
 import {
   postTurn,
   regenerateTurn,
@@ -22,6 +22,7 @@ import {
   removeAgent,
   runVoicePass,
   editTaggedText,
+  runColdOpen,
   type Claim,
   type ClaimConflict,
   type ApiError,
@@ -221,6 +222,21 @@ export function SessionView({ initial }: { initial: Session }) {
   );
   const [claimsLoading, setClaimsLoading] = useState(false);
   const [checked, setChecked] = useState<Record<number, boolean>>({});
+  const [coldOpen, setColdOpen] = useState<ColdOpen | null>(initial.coldOpen ?? null);
+  const [coldOpenLoading, setColdOpenLoading] = useState(false);
+
+  async function handleColdOpen() {
+    setColdOpenLoading(true);
+    try {
+      const co = await runColdOpen(initial.id);
+      setColdOpen(co);
+      if (!co) toast.info('No cold-open candidate found.');
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setColdOpenLoading(false);
+    }
+  }
 
   useEffect(() => {
     try {
@@ -493,6 +509,31 @@ export function SessionView({ initial }: { initial: Session }) {
       )}
 
       {/* Transcript */}
+      {complete && (
+        <div className="mb-5 rounded-lg border border-primary/30 bg-primary/5 p-4">
+          <div className="flex items-center justify-between">
+            <h2 className="font-medium">Cold open candidate</h2>
+            <Button size="sm" variant="outline" onClick={handleColdOpen} disabled={coldOpenLoading}>
+              {coldOpenLoading ? 'Finding…' : coldOpen ? 'Re-find' : 'Find cold open'}
+            </Button>
+          </div>
+          {coldOpen ? (
+            <blockquote className="mt-2 border-l-2 pl-3 text-sm">
+              <p className="italic">&ldquo;{coldOpen.text}&rdquo;</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                — {coldOpen.speaker}
+                {coldOpen.turnIndex != null && ` · turn #${coldOpen.turnIndex}`}
+                {coldOpen.reason && ` · ${coldOpen.reason}`}
+              </p>
+            </blockquote>
+          ) : (
+            <p className="mt-1 text-sm text-muted-foreground">
+              The best 15–30 seconds for the clip before the intro.
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="space-y-5">
         {turns.length === 0 && (
           <p className="text-sm text-muted-foreground">

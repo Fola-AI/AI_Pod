@@ -59,6 +59,53 @@ export async function getPersonaById(id: string): Promise<Persona | undefined> {
   return rows[0] ? rowToPersona(rows[0]) : undefined;
 }
 
+export interface PersonaInput {
+  name: string;
+  shortDescription?: string;
+  systemPromptFragment?: string;
+  speakingStyle?: string;
+}
+
+export async function createPersona(input: PersonaInput): Promise<Persona> {
+  await seedPersonasIfEmpty();
+  const id = crypto.randomUUID();
+  await db.insert(personas).values({
+    id,
+    name: input.name,
+    shortDescription: input.shortDescription ?? '',
+    systemPromptFragment: input.systemPromptFragment ?? '',
+    speakingStyle: input.speakingStyle ?? '',
+    isBuiltIn: false,
+  });
+  return (await getPersonaById(id))!;
+}
+
+// Edits are allowed on built-ins too (that's the point of moving them to the DB);
+// isBuiltIn is preserved and seeding never overwrites an edited row.
+export async function updatePersona(
+  id: string,
+  input: Partial<PersonaInput>,
+): Promise<Persona | undefined> {
+  await db
+    .update(personas)
+    .set({
+      ...(input.name !== undefined ? { name: input.name } : {}),
+      ...(input.shortDescription !== undefined
+        ? { shortDescription: input.shortDescription }
+        : {}),
+      ...(input.systemPromptFragment !== undefined
+        ? { systemPromptFragment: input.systemPromptFragment }
+        : {}),
+      ...(input.speakingStyle !== undefined ? { speakingStyle: input.speakingStyle } : {}),
+    })
+    .where(eq(personas.id, id));
+  return getPersonaById(id);
+}
+
+export async function deletePersona(id: string): Promise<void> {
+  await db.delete(personas).where(eq(personas.id, id));
+}
+
 /**
  * Capture each agent's persona text into `personaSnapshot` at session creation
  * (B-6). The session then replays from this snapshot regardless of later edits,

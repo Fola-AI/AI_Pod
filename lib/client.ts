@@ -1,6 +1,14 @@
 // Client-side API helpers.
 
-import type { Claim, ClaimConflict, Persona, Session, Turn } from '@/lib/types';
+import type {
+  Character,
+  Claim,
+  ClaimConflict,
+  ColdOpen,
+  Persona,
+  Session,
+  Turn,
+} from '@/lib/types';
 import type { SessionSummary } from '@/lib/db/queries';
 import type { ProviderId } from '@/lib/types';
 
@@ -52,6 +60,65 @@ export async function fetchPersonas(): Promise<Persona[]> {
   const res = await fetch('/api/personas', { cache: 'no-store' });
   const data = await jsonOrThrow(res);
   return data.personas ?? [];
+}
+
+export async function createPersona(input: Partial<Persona>): Promise<Persona> {
+  const res = await fetch('/api/personas', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  return (await jsonOrThrow(res)).persona;
+}
+
+export async function updatePersona(id: string, input: Partial<Persona>): Promise<Persona> {
+  const res = await fetch(`/api/personas/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  return (await jsonOrThrow(res)).persona;
+}
+
+export async function deletePersona(id: string): Promise<void> {
+  const res = await fetch(`/api/personas/${id}`, { method: 'DELETE' });
+  await jsonOrThrow(res);
+}
+
+export async function fetchCharacters(): Promise<Character[]> {
+  const res = await fetch('/api/characters', { cache: 'no-store' });
+  return (await jsonOrThrow(res)).characters ?? [];
+}
+
+export async function createCharacter(input: Partial<Character>): Promise<Character> {
+  const res = await fetch('/api/characters', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  return (await jsonOrThrow(res)).character;
+}
+
+export async function updateCharacter(
+  id: string,
+  input: Partial<Character>,
+): Promise<Character> {
+  const res = await fetch(`/api/characters/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  return (await jsonOrThrow(res)).character;
+}
+
+export async function deleteCharacter(id: string): Promise<void> {
+  const res = await fetch(`/api/characters/${id}`, { method: 'DELETE' });
+  await jsonOrThrow(res);
+}
+
+export async function runColdOpen(sessionId: string): Promise<ColdOpen | null> {
+  const res = await fetch(`/api/sessions/${sessionId}/cold-open`, { method: 'POST' });
+  return (await jsonOrThrow(res)).coldOpen ?? null;
 }
 
 export async function createSession(payload: unknown): Promise<Session> {

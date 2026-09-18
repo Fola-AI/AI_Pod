@@ -21,6 +21,13 @@ const agentSchema = z.object({
   voiceId: z.string().optional(),
   webSearchEnabled: z.boolean().optional(),
   forceFirstSearch: z.boolean().optional(),
+  characterId: z.string().optional(),
+});
+
+const relationshipSchema = z.object({
+  agentA: z.string().min(1),
+  agentB: z.string().min(1),
+  dynamic: z.string().min(1),
 });
 
 const moderatorSchema = z.object({
@@ -64,6 +71,7 @@ export const createSessionSchema = z
       .enum(['off', 'low', 'medium', 'high'])
       .default('medium'),
     openingBanter: z.boolean().default(true),
+    relationships: z.array(relationshipSchema).optional(),
     webSearch: z
       .object({
         mode: z.enum(['none', 'shared', 'native']).default('shared'),
@@ -132,6 +140,7 @@ export function toSessionConfig(input: CreateSessionInput): SessionConfig {
     budgetCapUsd: input.budgetCapUsd,
     interjectionRate: input.interjectionRate,
     openingBanter: input.openingBanter,
+    relationships: input.relationships,
     webSearch: input.webSearch,
     createdAt: new Date().toISOString(),
   };

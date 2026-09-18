@@ -33,7 +33,12 @@ export default async function Dashboard() {
             Automated multi-agent discussions, exported as clean scripts.
           </p>
         </div>
-        <Button render={<Link href="/session/new" />}>New session</Button>
+        <div className="flex gap-2">
+          <Button variant="outline" render={<Link href="/library" />}>
+            Characters &amp; personas
+          </Button>
+          <Button render={<Link href="/session/new" />}>New session</Button>
+        </div>
       </div>
 
       {dbError && (

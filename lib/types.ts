@@ -114,11 +114,50 @@ export interface PersonaSnapshot {
   speakingStyle: string;
 }
 
+// Show-bible recurring character (B-6, A-4). A fourth, optional continuity slot,
+// independent of persona and model. runningNotes/catchphrases are injected into
+// the prompt — but ship EMPTY: they earn content after several episodes.
+export interface Character {
+  id: string;
+  displayName: string;
+  defaultPersonaId: string;
+  voiceId?: string;
+  runningNotes: string; // empty until the operator fills it in
+  catchphrases: string[]; // empty until the operator fills it in
+  createdAt: string;
+}
+
+// The character content used by an agent, captured at session creation — same
+// snapshot-for-provenance reasoning as PersonaSnapshot (B-6).
+export interface CharacterSnapshot {
+  runningNotes: string;
+  catchphrases: string[];
+}
+
+// A relationship between two agents in a session (B-6, A-3). Injected into both
+// agents' prompts. Session-level, stored in the config; default is none.
+export interface Relationship {
+  agentA: string; // agent id
+  agentB: string; // agent id
+  dynamic: string; // e.g. "Old friends who disagree about everything and enjoy it"
+}
+
+// Cold-open candidate (B-6, A-7): the best 15-30 seconds of a completed session,
+// identified by a post-session frontier call. Shown on the transcript, in JSON.
+export interface ColdOpen {
+  speaker: string; // speaker display name
+  text: string; // the exact spoken span
+  turnIndex?: number;
+  reason?: string; // why it's compelling
+}
+
 export interface AgentConfig {
   id: string;
   displayName: string; // Operator's character name, e.g. "Lara"
   personaId: string; // FK into persona library (which persona was chosen)
   personaSnapshot?: PersonaSnapshot; // Persona content at creation (B-6); replay/provenance
+  characterId?: string; // Optional show-bible character (B-6, A-4)
+  characterSnapshot?: CharacterSnapshot; // Character content at creation (B-6)
   modelId: string; // FK into model registry
   stance?: string; // Debate / hot-seat only
   temperature: number; // Default 0.85
@@ -164,6 +203,7 @@ export interface SessionConfig {
   openingBanter?: boolean; // Light chat before the topic. Default true
   webSearch?: WebSearchConfig; // Web search grounding (P1-2 / B-5.5)
   researchPack?: string; // Pre-computed topic brief injected into agent prompts (B-5.5)
+  relationships?: Relationship[]; // Agent-pair dynamics (B-6, A-3); default none
   createdAt: string;
 }
 
@@ -236,6 +276,7 @@ export interface Session {
   totalCostUsd: number;
   claims?: Claim[]; // Persisted after extraction; included in the JSON export
   claimConflicts?: ClaimConflict[]; // Conflicting values for the same quantity
+  coldOpen?: ColdOpen; // Best 15-30s clip candidate (B-6, A-7)
   createdAt: string;
   completedAt?: string;
 }

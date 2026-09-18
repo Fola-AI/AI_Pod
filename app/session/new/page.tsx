@@ -32,7 +32,7 @@ import {
   modelSupportsFunctionCalling,
   providerSupportsWebSearch,
 } from '@/config/models';
-import type { Persona } from '@/lib/types';
+import type { Character, Persona } from '@/lib/types';
 import { FORMAT_LIST, FORMATS, isStanceBearing } from '@/lib/formats';
 import type { ProviderId, SessionFormat, SessionConfig } from '@/lib/types';
 
@@ -58,7 +58,12 @@ function agentGroundingState(
     ? { ok: true, label: 'Searches via the shared web tool' }
     : { ok: false, label: "Research pack — this model can't call tools" };
 }
-import { createSession, fetchProviders, fetchPersonas } from '@/lib/client';
+import {
+  createSession,
+  fetchProviders,
+  fetchPersonas,
+  fetchCharacters,
+} from '@/lib/client';
 import { estimateSessionCost, formatUsd } from '@/lib/cost';
 import { PRESETS } from '@/lib/presets';
 
@@ -73,6 +78,7 @@ interface AgentDraft {
   referenceImage: string;
   voiceId: string;
   webSearchEnabled: boolean;
+  characterId?: string; // optional show-bible character (B-6)
 }
 
 const NAME_POOL = ['Lara', 'Tony', 'Kimi', 'Ada', 'Zoe', 'Ravi'];
@@ -137,6 +143,10 @@ export default function NewSessionPage() {
   type ProviderStatus = Awaited<ReturnType<typeof fetchProviders>>;
   const [providers, setProviders] = useState<ProviderStatus | null>(null);
   const [personas, setPersonas] = useState<Persona[]>([]);
+  const [characters, setCharacters] = useState<Character[]>([]);
+  const [relationships, setRelationships] = useState<
+    { agentA: string; agentB: string; dynamic: string }[]
+  >([]);
 
   useEffect(() => {
     fetchProviders()
@@ -145,6 +155,9 @@ export default function NewSessionPage() {
     fetchPersonas()
       .then(setPersonas)
       .catch(() => setPersonas([]));
+    fetchCharacters()
+      .then(setCharacters)
+      .catch(() => setCharacters([]));
   }, []);
 
   function addSource() {
@@ -314,7 +327,12 @@ export default function NewSessionPage() {
           referenceImage: a.referenceImage.trim() || undefined,
           voiceId: a.voiceId.trim() || undefined,
           webSearchEnabled: a.webSearchEnabled,
+          characterId: a.characterId || undefined,
         })),
+        relationships: relationships.filter((r) => r.agentA && r.agentB && r.dynamic.trim())
+          .length
+          ? relationships.filter((r) => r.agentA && r.agentB && r.dynamic.trim())
+          : undefined,
         moderator: {
           displayName: modName.trim() || 'Moderator',
           modelId: modModelId,
@@ -500,11 +518,58 @@ export default function NewSessionPage() {
               ⚠ {modelWarning}
             </div>
           )}
-          {agents.map((a, i) => (
+          {agents.map((a, i) => {
+            const char = characters.find((c) => c.id === a.characterId);
+            const overridden = (field: 'name' | 'persona' | 'voice') => {
+              if (!char) return false;
+              if (field === 'name') return a.displayName !== char.displayName;
+              if (field === 'persona') return a.personaId !== char.defaultPersonaId;
+              return (a.voiceId || '') !== (char.voiceId || '');
+            };
+            const OverrideMark = ({ field }: { field: 'name' | 'persona' | 'voice' }) =>
+              overridden(field) ? (
+                <span className="ml-1 text-[10px] text-amber-600 dark:text-amber-500">
+                  · overridden
+                </span>
+              ) : null;
+            return (
             <div key={a.id} className="rounded-lg border p-4 space-y-3">
+              {characters.length > 0 && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Character (show bible, optional)</Label>
+                  <select
+                    className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                    value={a.characterId ?? ''}
+                    onChange={(e) => {
+                      const c = characters.find((x) => x.id === e.target.value);
+                      updateAgent(
+                        a.id,
+                        c
+                          ? {
+                              characterId: c.id,
+                              displayName: c.displayName,
+                              personaId: c.defaultPersonaId || a.personaId,
+                              voiceId: c.voiceId ?? a.voiceId,
+                            }
+                          : { characterId: undefined },
+                      );
+                    }}
+                  >
+                    <option value="">(none)</option>
+                    {characters.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.displayName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Character name</Label>
+                  <Label className="text-xs">
+                    Character name
+                    <OverrideMark field="name" />
+                  </Label>
                   <Input
                     value={a.displayName}
                     onChange={(e) =>
@@ -513,7 +578,10 @@ export default function NewSessionPage() {
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Persona</Label>
+                  <Label className="text-xs">
+                    Persona
+                    <OverrideMark field="persona" />
+                  </Label>
                   <Select
                     value={a.personaId}
                     onValueChange={(v) =>
@@ -661,7 +729,88 @@ export default function NewSessionPage() {
                 Seat {i + 1}
               </span>
             </div>
-          ))}
+            );
+          })}
+
+          <div className="space-y-2 rounded-lg border p-4">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Relationships (optional)</Label>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  setRelationships((r) => [
+                    ...r,
+                    { agentA: agents[0]?.id ?? '', agentB: agents[1]?.id ?? '', dynamic: '' },
+                  ])
+                }
+              >
+                Add
+              </Button>
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              Chemistry from history — injected into both agents&rsquo; prompts.
+            </p>
+            {relationships.map((r, ri) => (
+              <div key={ri} className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_2fr_auto] gap-2">
+                <select
+                  className="h-9 rounded-md border bg-transparent px-2 text-sm"
+                  value={r.agentA}
+                  onChange={(e) =>
+                    setRelationships((rs) =>
+                      rs.map((x, i) => (i === ri ? { ...x, agentA: e.target.value } : x)),
+                    )
+                  }
+                >
+                  {agents.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.displayName}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="h-9 rounded-md border bg-transparent px-2 text-sm"
+                  value={r.agentB}
+                  onChange={(e) =>
+                    setRelationships((rs) =>
+                      rs.map((x, i) => (i === ri ? { ...x, agentB: e.target.value } : x)),
+                    )
+                  }
+                >
+                  {agents.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.displayName}
+                    </option>
+                  ))}
+                </select>
+                <Input
+                  list="relationship-presets"
+                  placeholder="e.g. Old friends who disagree about everything and enjoy it"
+                  value={r.dynamic}
+                  onChange={(e) =>
+                    setRelationships((rs) =>
+                      rs.map((x, i) => (i === ri ? { ...x, dynamic: e.target.value } : x)),
+                    )
+                  }
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setRelationships((rs) => rs.filter((_, i) => i !== ri))}
+                >
+                  ✕
+                </Button>
+              </div>
+            ))}
+            <datalist id="relationship-presets">
+              <option value="Old friends who disagree about everything and enjoy it" />
+              <option value="Respect each other but find the other exhausting" />
+              <option value="One is always trying to make the other laugh" />
+              <option value="Recently changed their mind because of something the other said" />
+            </datalist>
+          </div>
         </CardContent>
       </Card>
 

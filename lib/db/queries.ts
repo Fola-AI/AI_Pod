@@ -50,6 +50,7 @@ function rowToSession(s: SessionRow, ts: TurnRow[]): Session {
     totalCostUsd: s.totalCostUsd,
     claims: s.claims ?? undefined,
     claimConflicts: s.claimConflicts ?? undefined,
+    coldOpen: s.coldOpen ?? undefined,
     createdAt:
       s.createdAt instanceof Date ? s.createdAt.toISOString() : String(s.createdAt),
     completedAt: s.completedAt
@@ -176,6 +177,14 @@ export async function setSessionStatus(
   status: SessionStatus,
 ): Promise<void> {
   await db.update(sessions).set({ status }).where(eq(sessions.id, id));
+}
+
+/** Persist the cold-open candidate for a session (B-6). */
+export async function setSessionColdOpen(
+  id: string,
+  coldOpen: import('@/lib/types').ColdOpen,
+): Promise<void> {
+  await db.update(sessions).set({ coldOpen }).where(eq(sessions.id, id));
 }
 
 /** Persist the extracted claims checklist (and any value conflicts) for a session. */

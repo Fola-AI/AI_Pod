@@ -14,6 +14,7 @@ import {
 import type {
   Claim,
   ClaimConflict,
+  ColdOpen,
   SessionConfig,
   SessionStatus,
   TurnClass,
@@ -30,6 +31,7 @@ export const sessions = pgTable('sessions', {
   totalCostUsd: doublePrecision('total_cost_usd').notNull().default(0),
   claims: jsonb('claims').$type<Claim[]>(),
   claimConflicts: jsonb('claim_conflicts').$type<ClaimConflict[]>(),
+  coldOpen: jsonb('cold_open').$type<ColdOpen>(),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -86,6 +88,19 @@ export const personas = pgTable('personas', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Show-bible characters (B-6, A-4). Reusable across sessions; runningNotes and
+// catchphrases ship empty and earn content over episodes.
+export const characters = pgTable('characters', {
+  id: text('id').primaryKey(),
+  displayName: text('display_name').notNull(),
+  defaultPersonaId: text('default_persona_id').notNull().default(''),
+  voiceId: text('voice_id'),
+  runningNotes: text('running_notes').notNull().default(''),
+  catchphrases: jsonb('catchphrases').$type<string[]>().notNull().default([]),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export type SessionRow = typeof sessions.$inferSelect;
 export type TurnRow = typeof turns.$inferSelect;
 export type PersonaRow = typeof personas.$inferSelect;
+export type CharacterRow = typeof characters.$inferSelect;
