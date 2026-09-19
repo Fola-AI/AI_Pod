@@ -168,19 +168,26 @@ function escapeRegex(s: string): string {
 }
 
 /**
- * If a moderator interjection names a participant, that participant must answer
- * next — overriding rotation.
+ * If a moderator turn (opening or interjection) names a participant, that
+ * participant answers next — overriding rotation.
  *
- * Prefer a direct address (name at the start, or "Name," / "Name?" / "Name:").
- * When several names are addressed, the LAST wins: moderators routinely
- * reference a prior speaker before directing the next one ("Otis, you made a
- * claim… Gretchen, steelman it"), and the operative instruction comes last.
- * Possessive forms ("Otis's side") are objects, not addressees, and are ignored
- * entirely. Falls back to the first plainly-mentioned name.
+ * A direct address is a name at the start, or followed by an address delimiter:
+ * a comma, question mark, colon, or an em- or en-dash ("Kimi — China…"). Among
+ * addressed names the LAST OPERATIVE one wins: moderators routinely reference a
+ * prior speaker first ("Otis, you made a claim… Gretchen, steelman it") or queue
+ * someone for later ("Kimi — go. Ada, after her"). A name whose clause defers it
+ * ("after", "later", "once…") is not operative. Possessives ("Otis's side") are
+ * objects, never addressees. Falls back to the last address, then the first plain
+ * mention. Written against the address/deferral pattern, not specific phrasings.
  */
+const ADDRESS_DELIM = /^\s*[,?:—–]/; // , ? : — –
+const DEFERRAL_CUE =
+  /\b(after|afterwards|later|once|hold on|hold off|wait|stand by|to follow|for later|in a moment)\b/;
+
 function findDirectedAgent(config: SessionConfig, text: string) {
-  let addressed: { agent: AgentConfig; idx: number } | null = null; // last address
-  let mentioned: { agent: AgentConfig; idx: number } | null = null; // first mention
+  const operative: { agent: AgentConfig; idx: number }[] = [];
+  const allAddressed: { agent: AgentConfig; idx: number }[] = [];
+  let mentioned: { agent: AgentConfig; idx: number } | null = null;
   for (const agent of config.agents) {
     const n = escapeRegex(agent.displayName);
     const re = new RegExp(`\\b${n}\\b`, 'gi');
@@ -192,15 +199,33 @@ function findDirectedAgent(config: SessionConfig, text: string) {
       if (/^['’]s?\b/.test(after)) continue;
       const before = text.slice(0, idx);
       const atLineStart = /(^|\n)\s*$/.test(before);
-      const addrPunct = /^\s*[,?:]/.test(after);
-      if (atLineStart || addrPunct) {
-        if (addressed === null || idx > addressed.idx) addressed = { agent, idx };
+      if (atLineStart || ADDRESS_DELIM.test(after)) {
+        allAddressed.push({ agent, idx });
+        // The clause up to the next sentence end — deferred addresses ("…, after
+        // her") queue the name for later, so they are not the operative directive.
+        const clause = after.replace(ADDRESS_DELIM, '').split(/[.!?\n]/)[0];
+        if (!DEFERRAL_CUE.test(clause.toLowerCase())) operative.push({ agent, idx });
       } else if (mentioned === null || idx < mentioned.idx) {
         mentioned = { agent, idx };
       }
     }
   }
-  return (addressed ?? mentioned)?.agent ?? null;
+  const last = (arr: { agent: AgentConfig; idx: number }[]) =>
+    arr.length ? arr.reduce((a, b) => (b.idx > a.idx ? b : a)) : null;
+  return (last(operative) ?? last(allAddressed) ?? mentioned)?.agent ?? null;
+}
+
+/**
+ * The order agents give their openings in. If the moderator's opening turn names
+ * a starter ("Ada, start us with a number"), that agent leads and the rest follow
+ * config order (B-7). Otherwise config order.
+ */
+function openingOrder(config: SessionConfig, turns: Turn[]): AgentConfig[] {
+  const open = turns.find((t) => t.turnType === 'moderator-opening');
+  if (!open) return config.agents;
+  const starter = findDirectedAgent(config, open.text);
+  if (!starter) return config.agents;
+  return [starter, ...config.agents.filter((a) => a.id !== starter.id)];
 }
 
 /**
@@ -402,10 +427,10 @@ export function planNextTurn(
     if (interjection) return interjection;
   }
 
-  // 2. Agent openings, in order.
+  // 2. Agent openings — honour a moderator-named starter, else config order.
   const openingsDone = turns.filter((t) => t.turnType === 'opening').length;
   if (openingsDone < N) {
-    return agentPlan(config, config.agents[openingsDone], 'opening', {});
+    return agentPlan(config, openingOrder(config, turns)[openingsDone], 'opening', {});
   }
 
   const callClosingsDone = turns.some((t) => t.turnType === 'call-closings');

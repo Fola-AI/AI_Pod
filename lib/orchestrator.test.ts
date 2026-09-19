@@ -217,3 +217,70 @@ describe('interjection count-targeting (B-6)', () => {
     expect(plan.turnClass).not.toBe('interjection');
   });
 });
+
+describe('moderator-directed routing — dashes, colon, deferral, opening (B-7)', () => {
+  // A 4-agent config so the exact failing strings (Kimi, Ada) apply.
+  const cfg4: SessionConfig = {
+    ...config,
+    agentCount: 4,
+    agents: [
+      agent('a1', 'Lara'),
+      agent('a2', 'Tony'),
+      agent('a3', 'Kimi'),
+      agent('a4', 'Ada'),
+    ],
+  };
+  const modTurn = (text: string, type: Turn['turnType'] = 'moderator') =>
+    turn('moderator', 'Moderator', type, text);
+
+  it('matches an em-dash address ("Kimi — China…")', () => {
+    const turns = [...openedTurns4(), modTurn('Kimi — China leads the world here.')];
+    expect(planNextTurn(cfg4, turns, {})!.speakerId).toBe('a3');
+  });
+  it('matches an en-dash address', () => {
+    const turns = [...openedTurns4(), modTurn('Kimi – your read on China?')];
+    expect(planNextTurn(cfg4, turns, {})!.speakerId).toBe('a3');
+  });
+  it('matches a colon address', () => {
+    const turns = [...openedTurns4(), modTurn('Kimi: take the China angle.')];
+    expect(planNextTurn(cfg4, turns, {})!.speakerId).toBe('a3');
+  });
+  it('routes to the operative address, not a deferred one (exact failing string)', () => {
+    const turns = [
+      ...openedTurns4(),
+      modTurn(
+        'Kimi — China. Roughly half the world’s new panels went up in one country last year. If China’s installations slow down, does the global growth story stop being a story? Ada, have the figure ready after her.',
+      ),
+    ];
+    expect(planNextTurn(cfg4, turns, {})!.speakerId).toBe('a3'); // Kimi, not Ada (deferred)
+  });
+  it('opening round honours a moderator-named starter (exact failing string)', () => {
+    const turns = [
+      modTurn(
+        'Ada, start us with a number. How much solar went in last year, and how does that compare to the year before?',
+        'moderator-opening',
+      ),
+    ];
+    const plan = planNextTurn(cfg4, turns, {})!;
+    expect(plan.turnType).toBe('opening');
+    expect(plan.speakerId).toBe('a4'); // Ada leads, not Lara (config order)
+  });
+  it('opening round falls back to config order when no starter is named', () => {
+    const turns = [modTurn('Let us begin. Give me your openings.', 'moderator-opening')];
+    const plan = planNextTurn(cfg4, turns, {})!;
+    expect(plan.turnType).toBe('opening');
+    expect(plan.speakerId).toBe('a1'); // Lara — config order
+  });
+
+  function openedTurns4(): Turn[] {
+    n = 0;
+    return [
+      turn('moderator', 'Moderator', 'moderator-opening', 'Welcome.'),
+      turn('a1', 'Lara', 'opening', 'Opening.'),
+      turn('a2', 'Tony', 'opening', 'Opening.'),
+      turn('a3', 'Kimi', 'opening', 'Opening.'),
+      turn('a4', 'Ada', 'opening', 'Opening.'),
+      turn('a1', 'Lara', 'standard', 'Reply.'),
+    ];
+  }
+});

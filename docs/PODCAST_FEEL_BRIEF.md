@@ -195,6 +195,6 @@ Add a fourth export format: **ElevenLabs script**.
 3. `shared-curiosity` format produces a transcript in which participants agree with and build on each other
 4. A cold open candidate is identified and appears on the transcript screen
 5. Voice pass produces tagged text without altering any spoken word — diff `text` against `taggedText` with tags stripped and confirm they are identical
-6. Tag density averages roughly one per 40–60 words, and no `[laughs]` appears on a line that isn't funny
+6. Tags are varied in type, are not formulaic in placement, and no `[laughs]` appears on a line that isn't funny
 7. ElevenLabs export is valid, ordered, and carries a voice id per speaker where one is set
 8. Characters and Personas both have working CRUD screens

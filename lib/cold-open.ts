@@ -60,16 +60,30 @@ export async function findColdOpen(session: Session): Promise<ColdOpen | null> {
   if (!modelId) throw new Error('No available model for the cold-open pass. Add a provider key.');
   const model = getModel(modelId)!;
   const adapter = getAdapter(model.provider);
-  const result = await withRetry(() =>
-    adapter.generate({
-      apiModelString: model.apiModelString,
-      systemPrompt: SYSTEM,
-      messages: [
-        { role: 'user', content: `Pick the cold open from this transcript:\n\n${renderTranscript(session)}` },
-      ],
-      temperature: 0,
-      maxTokens: 600,
-    }),
-  );
-  return parseColdOpen(result.text);
+  const transcript = renderTranscript(session);
+  const ask = (reminder: string) =>
+    withRetry(() =>
+      adapter.generate({
+        apiModelString: model.apiModelString,
+        systemPrompt: SYSTEM,
+        messages: [
+          {
+            role: 'user',
+            content: `Pick the cold open from this transcript:\n\n${transcript}${reminder}`,
+          },
+        ],
+        temperature: 0,
+        maxTokens: 600,
+      }),
+    );
+  // withRetry covers thrown errors; a successful-but-unparseable response (the
+  // model returned prose, not the JSON object) is not an error, so retry once
+  // more here with a firmer reminder before giving up.
+  let parsed = parseColdOpen((await ask('')).text);
+  if (!parsed) {
+    parsed = parseColdOpen(
+      (await ask('\n\nRespond with ONLY the JSON object described above.')).text,
+    );
+  }
+  return parsed;
 }
