@@ -30,6 +30,12 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
         <main className="flex-1 mx-auto w-full max-w-6xl px-4 py-8">
           {children}
         </main>
+        <footer className="mx-auto w-full max-w-6xl px-4 py-3 text-[10px] text-muted-foreground">
+          build{' '}
+          <span className="font-mono">
+            {process.env.NEXT_PUBLIC_BUILD_SHA ?? 'dev'}
+          </span>
+        </footer>
         <Toaster richColors position="top-center" />
       </body>
     </html>
