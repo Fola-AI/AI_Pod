@@ -5,16 +5,16 @@
 
 import type { ColdOpen, Session } from '@/lib/types';
 import { MODELS, getModel } from '@/config/models';
-import { getAdapter, isProviderAvailable, withRetry } from '@/lib/providers';
+import { getAdapter, isModelAvailable, withRetry } from '@/lib/providers';
 
 function pickModel(session: Session): string | null {
   const preferred = getModel(session.config.moderator.modelId);
-  if (preferred && isProviderAvailable(preferred.provider)) return preferred.id;
+  if (preferred && isModelAvailable(preferred)) return preferred.id;
   const frontier = MODELS.find(
-    (m) => m.tier === 'frontier' && m.enabled && isProviderAvailable(m.provider),
+    (m) => m.tier === 'frontier' && m.enabled && isModelAvailable(m),
   );
   if (frontier) return frontier.id;
-  return MODELS.find((m) => m.enabled && isProviderAvailable(m.provider))?.id ?? null;
+  return MODELS.find((m) => m.enabled && isModelAvailable(m))?.id ?? null;
 }
 
 const SYSTEM = `You choose the cold open for a podcast episode — the single clip that plays before the intro to make someone want to listen.
@@ -59,7 +59,7 @@ export async function findColdOpen(session: Session): Promise<ColdOpen | null> {
   const modelId = pickModel(session);
   if (!modelId) throw new Error('No available model for the cold-open pass. Add a provider key.');
   const model = getModel(modelId)!;
-  const adapter = getAdapter(model.provider);
+  const adapter = getAdapter(model.provider, model.route);
   const transcript = renderTranscript(session);
   const ask = (reminder: string) =>
     withRetry(() =>

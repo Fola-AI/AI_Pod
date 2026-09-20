@@ -24,7 +24,7 @@ import {
 } from '@/config/models';
 import { getAdapter, withRetry } from '@/lib/providers';
 import type { ProviderId } from '@/lib/types';
-import { EmptyContentError } from '@/lib/providers/errors';
+import { EmptyContentError, ProviderError } from '@/lib/providers/errors';
 import { hasSearchKey } from '@/lib/search';
 import { runSharedSearchLoop } from '@/lib/tool-loop';
 import {
@@ -37,6 +37,7 @@ import type { TurnPlan } from '@/lib/orchestrator';
 import { MODERATOR_ID } from '@/lib/orchestrator';
 import { countWords, turnCostUsd } from '@/lib/cost';
 import { validateTurn } from '@/lib/turn-validation';
+import { turnMaxTokens } from '@/lib/turn-budget';
 
 // Resolve the session's grounding mode, tolerant of legacy configs: pre-5.5
 // sessions stored `webSearch.enabled` (a boolean) and used native search.
@@ -80,10 +81,15 @@ function computeWebSearchMaxUses(
   return Math.max(1, Math.min(perTurn, remaining));
 }
 
-/** Generous, word-budget-independent token ceiling (P0-1 §2). */
+/** Generous, word-budget-independent token ceiling (P0-1 §2). Shared with
+ *  pre-flight via lib/turn-budget so a check never uses a smaller budget than a
+ *  real turn (the ≥500 headroom rule for reasoning models is applied there). */
 function maxTokensFor(plan: TurnPlan): number {
-  const floor = plan.speakerId === MODERATOR_ID ? 400 : 600;
-  return Math.max(floor, plan.maxWords * 4);
+  return turnMaxTokens({
+    isModerator: plan.speakerId === MODERATOR_ID,
+    maxWords: plan.maxWords,
+    modelId: plan.modelId,
+  });
 }
 
 /** Map the provider-reported model string back to a registry id, if we can. */
@@ -112,7 +118,7 @@ export async function executeTurn(
   }
 
   // getAdapter throws MissingKeyError if no key (skipped when a stub is injected).
-  const adapter = overrideAdapter ?? getAdapter(model.provider);
+  const adapter = overrideAdapter ?? getAdapter(model.provider, model.route);
 
   const isModerator = plan.speakerId === MODERATOR_ID;
   const mode = resolveSearchMode(config);
@@ -160,6 +166,7 @@ export async function executeTurn(
     wasTruncated: boolean,
     searches: TurnSearch[] | undefined,
     searchDegraded: boolean,
+    emptyRetries = 0,
   ): Omit<Turn, 'index'> => ({
     speakerId: plan.speakerId,
     speakerDisplayName: plan.speakerDisplayName,
@@ -177,6 +184,7 @@ export async function executeTurn(
     wasEdited: false,
     isStale: false,
     wasTruncated,
+    emptyRetries: emptyRetries || undefined,
     createdAt: new Date().toISOString(),
   });
 
@@ -277,11 +285,16 @@ export async function executeTurn(
   let { result, searches, degraded } = await call(baseMaxTokens, baseUserMessage);
   let v = validateTurn(result.text, result.stopReason);
 
-  // Empty: the call succeeded but content is blank. Retry twice, then fatal.
+  // Empty: the call succeeded but content is blank. Retry twice (fresh whole-turn
+  // call, full context), then fatal. Count the empties so a model that blanks on
+  // >half its turns can be flagged as a roster problem on the transcript (bug 2).
+  let emptyRetries = 0;
   if (!v.valid && v.reason === 'empty') {
+    emptyRetries = 1; // attempt 1 came back empty
     for (let i = 0; i < 2 && !v.valid; i++) {
       ({ result, searches, degraded } = await call(baseMaxTokens, baseUserMessage));
       v = validateTurn(result.text, result.stopReason);
+      if (!v.valid && v.reason === 'empty') emptyRetries++;
     }
     if (!v.valid && v.reason === 'empty') {
       throw new EmptyContentError(model.provider, model.displayName);
@@ -299,19 +312,47 @@ export async function executeTurn(
     }
   }
 
-  // Truncated: retry once with double the budget and an explicit finish
-  // instruction. If it still doesn't land, persist it flagged.
+  // Truncated: retry up to twice with double the budget and an explicit finish
+  // instruction. If it STILL ends mid-sentence, never export it that way (rule 2):
+  // trim back to the last complete sentence and keep the flag. If nothing complete
+  // remains, it's unusable — halt (like empty) rather than persist a fragment.
   let wasTruncated = false;
   if (!v.valid && v.reason === 'truncated') {
     const retryMessage = `${baseUserMessage}\n\nKeep this turn under ${calibratedWordBudget(plan.modelId, plan.maxWords)} words and finish your final sentence completely.`;
-    ({ result, searches, degraded } = await call(baseMaxTokens * 2, retryMessage));
-    v = validateTurn(result.text, result.stopReason);
-    wasTruncated = !v.valid;
+    for (let i = 0; i < 2 && !v.valid && v.reason === 'truncated'; i++) {
+      ({ result, searches, degraded } = await call(baseMaxTokens * 2, retryMessage));
+      v = validateTurn(result.text, result.stopReason);
+    }
+    if (!v.valid && v.reason === 'truncated') {
+      const trimmed = trimToLastSentence(result.text);
+      if (!trimmed) {
+        // No complete sentence to salvage — surface it, don't ship a fragment.
+        throw new ProviderError(
+          `${model.displayName} could not produce a complete sentence after retries (${model.provider}).`,
+          { provider: model.provider, failureClass: 'fatal' },
+        );
+      }
+      result = { ...result, text: trimmed };
+      wasTruncated = true; // content was cut back; flag for the UI/export
+    }
   }
 
-  return buildTurn(result, wasTruncated, searches, degraded);
+  return buildTurn(result, wasTruncated, searches, degraded, emptyRetries);
 }
 
 export function turnWordCount(t: { text: string }): number {
   return countWords(t.text);
+}
+
+/**
+ * Trim text back to its last complete sentence (ending on . ! ? … with any
+ * trailing quote/bracket), so a still-truncated turn never reaches export ending
+ * mid-sentence (standing rule 2). Returns '' if no usable complete sentence
+ * remains (caller then treats it as unusable rather than persisting a fragment).
+ */
+export function trimToLastSentence(text: string): string {
+  const t = text.trim();
+  const m = t.match(/^[\s\S]*[.!?…]["'’)\]]*/);
+  const cut = m ? m[0].trim() : '';
+  return cut.length >= 20 ? cut : '';
 }

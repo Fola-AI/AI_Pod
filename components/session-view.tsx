@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -99,6 +99,25 @@ export function SessionView({ initial }: { initial: Session }) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const complete = status === 'complete';
+
+  // Flag any participant whose model blanked (empty return, retried) on more than
+  // half its turns — a roster problem, not a retry problem (bug 2).
+  const flakyModels = useMemo(() => {
+    const by = new Map<
+      string,
+      { name: string; model: string; total: number; empty: number }
+    >();
+    for (const t of turns) {
+      if (t.speakerId === 'moderator') continue;
+      const e =
+        by.get(t.speakerId) ??
+        { name: t.speakerDisplayName, model: t.modelId, total: 0, empty: 0 };
+      e.total++;
+      if ((t.emptyRetries ?? 0) > 0) e.empty++;
+      by.set(t.speakerId, e);
+    }
+    return [...by.values()].filter((e) => e.total >= 2 && e.empty / e.total > 0.5);
+  }, [turns]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -543,6 +562,16 @@ export function SessionView({ initial }: { initial: Session }) {
       {error && (
         <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
           {error}
+        </div>
+      )}
+
+      {flakyModels.length > 0 && (
+        <div className="rounded-lg border border-amber-500/50 bg-amber-500/5 p-3 text-sm text-amber-700 dark:text-amber-500">
+          ⚠ Unreliable on this prompt shape — returned empty on more than half their turns:{' '}
+          {flakyModels
+            .map((m) => `${m.name} (${m.model}, ${m.empty}/${m.total})`)
+            .join('; ')}
+          . This is a roster problem — consider substituting the model.
         </div>
       )}
 

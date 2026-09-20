@@ -48,12 +48,31 @@ async function jsonOrThrow(res: Response) {
   return data;
 }
 
+export interface ModelTestResult {
+  ok: boolean;
+  message?: string;
+  at: number;
+}
+
 export async function fetchProviders(): Promise<{
   available: Record<ProviderId, boolean>;
   implemented: Record<ProviderId, boolean>;
   hasKey: Record<ProviderId, boolean>;
+  modelTests: Record<string, ModelTestResult>;
 }> {
   const res = await fetch('/api/providers', { cache: 'no-store' });
+  return jsonOrThrow(res);
+}
+
+/** Test one model by id (registry screen / builder roster verify). */
+export async function testModel(
+  modelId: string,
+): Promise<{ ok: boolean; model?: string; message?: string }> {
+  const res = await fetch('/api/providers/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ modelId }),
+  });
   return jsonOrThrow(res);
 }
 

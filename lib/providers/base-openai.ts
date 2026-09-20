@@ -80,6 +80,8 @@ export interface OpenAICompatibleConfig {
   apiKey: string;
   /** Some providers reject a `system` role; fold it into the first user turn. */
   supportsSystemRole?: boolean;
+  /** Extra request headers (e.g. OpenRouter's HTTP-Referer / X-Title). */
+  extraHeaders?: Record<string, string>;
 }
 
 export function createOpenAICompatibleAdapter(
@@ -104,7 +106,10 @@ export function createOpenAICompatibleAdapter(
       }
 
       const url = `${cfg.baseUrl}/chat/completions`;
-      const headers = { Authorization: `Bearer ${cfg.apiKey}` };
+      const headers = {
+        Authorization: `Bearer ${cfg.apiKey}`,
+        ...(cfg.extraHeaders ?? {}),
+      };
 
       // Self-heal per-model parameter quirks: some models reject a non-default
       // `temperature`, and newer OpenAI models require `max_completion_tokens`
@@ -168,6 +173,17 @@ export function createOpenAICompatibleAdapter(
       const outputTokens: number = json?.usage?.completion_tokens ?? 0;
       const rawStopReason: string = json?.choices?.[0]?.finish_reason ?? '';
       const toolCalls = params.searchTool ? parseToolCalls(message) : undefined;
+
+      // Log every empty (blank-content, no tool call) return with the raw body,
+      // so a transient reasoning-model blip can be told from a model genuinely
+      // broken on this prompt shape (bug 2). Not an error here — the turn layer
+      // decides whether to retry or fatal.
+      if (!outText.trim() && !toolCalls?.length) {
+        console.warn(
+          `[empty] ${cfg.id}/${params.apiModelString} finish=${rawStopReason} ` +
+            `out_tokens=${outputTokens} raw=${(text ?? '').slice(0, 500)}`,
+        );
+      }
 
       return {
         text: outText.trim(),

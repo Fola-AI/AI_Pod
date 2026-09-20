@@ -33,8 +33,13 @@ It is a **script generation tool**, not a public product. See
    ```
 
    - `DATABASE_URL` — a Neon (or any Postgres) connection string.
-   - Provider keys — Phase 1 uses `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
-     `GOOGLE_AI_API_KEY`. Models whose key is missing show as unavailable.
+   - Direct provider keys — `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+     `GOOGLE_AI_API_KEY`, and `GROQ_API_KEY` (Groq is a deliberate direct
+     exception — see below). Models whose key is missing show as unavailable.
+   - `OPENROUTER_API_KEY` — one key for every non-direct vendor (xAI, DeepSeek,
+     Meta, Mistral, Alibaba). See **Model routing** below.
+   - `APP_URL` — your production URL (e.g. the Vercel URL). Sent as OpenRouter's
+     `HTTP-Referer` for dashboard attribution; falls back to `http://localhost:3000`.
    - `APP_ACCESS_PASSWORD` — optional single-password gate. Leave blank in dev.
 
 3. Push the schema to your database:
@@ -63,9 +68,49 @@ It is a **script generation tool**, not a public product. See
 
 Models live in [`config/models.ts`](config/models.ts) and are expected to be
 edited by hand — IDs and prices move monthly. Adding a model needs no code change
-beyond that file (as long as an adapter exists for its provider). The in-app
+beyond that file (as long as an adapter exists for its route). The in-app
 **Models** screen (`/registry`) shows the registry with per-provider key status
 and a Test-connection button.
+
+### Model routing (direct vs OpenRouter)
+
+Each model entry has a `route`: `'direct'` (default) or `'openrouter'`.
+
+- **Direct** — Anthropic, OpenAI, Google each hit their own endpoint (they carry
+  the native web-search paths). **Groq is a deliberate direct exception:** its
+  whole value is latency, and routing it through OpenRouter could land the call on
+  a slower host. It works and is funded, so it stays direct — this is settled, not
+  an oversight.
+- **OpenRouter** — every other vendor (xAI, DeepSeek, Meta, Mistral, Alibaba, and
+  anything new) routes through OpenRouter's OpenAI-compatible gateway with the
+  single `OPENROUTER_API_KEY`. The `provider` field still names the vendor for
+  grouping and pricing; only the transport changes.
+
+**Set a provider allowlist in your OpenRouter account.** Open-weight models can be
+served by many hosts of varying quality and privacy posture; the allowlist lets
+you control who actually runs your calls. The app can't enforce this — it's an
+account setting on openrouter.ai.
+
+### Tiering rule and its consequences
+
+Every model is tiered by the **vendor's own positioning**, not price or
+generation (the rule is documented in `config/models.ts`): a model still sold as
+flagship-class is `frontier` even if superseded; a workhorse or open-weight line
+is `professional`; small-and-cheap is `fast`.
+
+Applying it honestly leaves some tiers thin — **this is correct, not a bug:**
+
+| Vendor | frontier | professional | fast |
+|---|---|---|---|
+| Meta | — (open-weight line) | Llama 4 Maverick | Llama 3.1 8B |
+| Mistral | — (Large has no live endpoint) | Mistral Medium 3.5 | Ministral 8B |
+| Alibaba | Qwen3.8 Max, Qwen3.7 Max | — | Qwen3.8 Flash |
+| xAI | Grok 4.6, Grok 4.5 | Grok 4.3 | — |
+
+So **"one agent per provider at this tier"** (the Tier Match preset) produces
+different roster sizes per tier. The preset fills what exists and names the
+vendors unavailable at the chosen tier — it never silently substitutes a
+mis-tiered model, because an unfair matchup is the exact thing tiering prevents.
 
 ## Sessions run in the browser (resume on return)
 

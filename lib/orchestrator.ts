@@ -15,6 +15,13 @@ import type { TurnInstructionOpts } from '@/lib/prompts';
 
 export const MODERATOR_ID = 'moderator';
 
+// Every phase in which an AGENT (not the moderator) speaks and is therefore
+// subject to named-address routing. Adding a new agent turn type here forces the
+// routing guard test to cover it — the single-rule invariant is checked, not
+// assumed. `agentPlan`'s turnType is derived from this list.
+export const AGENT_TURN_TYPES = ['banter', 'opening', 'standard', 'closing'] as const;
+export type AgentTurnType = (typeof AGENT_TURN_TYPES)[number];
+
 const INTERJECTION_EVERY: Record<
   SessionConfig['moderator']['interjectionFrequency'],
   number
@@ -184,7 +191,10 @@ const ADDRESS_DELIM = /^\s*[,?:—–]/; // , ? : — –
 const DEFERRAL_CUE =
   /\b(after|afterwards|later|once|hold on|hold off|wait|stand by|to follow|for later|in a moment)\b/;
 
-function findDirectedAgent(config: SessionConfig, text: string) {
+// Scan a moderator turn for participant names, classifying each occurrence as an
+// operative address, a (possibly deferred) address, or a plain mention. Shared by
+// every phase's routing so the rules never drift apart per phase.
+function scanAddresses(config: SessionConfig, text: string) {
   const operative: { agent: AgentConfig; idx: number }[] = [];
   const allAddressed: { agent: AgentConfig; idx: number }[] = [];
   let mentioned: { agent: AgentConfig; idx: number } | null = null;
@@ -210,28 +220,40 @@ function findDirectedAgent(config: SessionConfig, text: string) {
       }
     }
   }
-  const last = (arr: { agent: AgentConfig; idx: number }[]) =>
-    arr.length ? arr.reduce((a, b) => (b.idx > a.idx ? b : a)) : null;
-  return (last(operative) ?? last(allAddressed) ?? mentioned)?.agent ?? null;
+  return { operative, allAddressed, mentioned };
+}
+
+const lastByIdx = (arr: { agent: AgentConfig; idx: number }[]) =>
+  arr.length ? arr.reduce((a, b) => (b.idx > a.idx ? b : a)) : null;
+
+/**
+ * THE named-address rule (P0-3 / B-7): if a moderator turn addresses a
+ * participant, that participant answers next. Among addressed names the LAST
+ * OPERATIVE one wins (moderators reference a prior speaker or queue someone for
+ * later before the real directive); a deferred clause ("…, after her") or a
+ * possessive ("Otis's side") is not operative. Falls back to the last address,
+ * then the first plain mention, then null. Every phase routes through this.
+ */
+function findDirectedAgent(config: SessionConfig, text: string) {
+  const { operative, allAddressed, mentioned } = scanAddresses(config, text);
+  return (lastByIdx(operative) ?? lastByIdx(allAddressed) ?? mentioned)?.agent ?? null;
 }
 
 /**
- * The order agents give their openings in. If the moderator's opening turn names
- * a starter ("Ada, start us with a number"), that agent leads and the rest follow
- * config order (B-7). Otherwise config order.
+ * Speaker order for a fixed-order phase (banter, openings) from its directing
+ * moderator turn: the named starter (findDirectedAgent) leads, the rest follow in
+ * config order. No name → config order. This is the same rule for every phase.
  */
-function openingOrder(config: SessionConfig, turns: Turn[]): AgentConfig[] {
-  const open = turns.find((t) => t.turnType === 'moderator-opening');
-  if (!open) return config.agents;
-  const starter = findDirectedAgent(config, open.text);
+function starterLeadOrder(config: SessionConfig, directingText: string | undefined): AgentConfig[] {
+  const starter = directingText ? findDirectedAgent(config, directingText) : null;
   if (!starter) return config.agents;
   return [starter, ...config.agents.filter((a) => a.id !== starter.id)];
 }
 
 /**
- * The order agents should give closings in. If the moderator's call-closings
- * turn names every agent, that stated order wins (same principle as
- * moderator-directed routing); otherwise config order.
+ * Closing order from the call-closings turn. A full, clean sequence (every agent
+ * named, distinct positions — "Tony, Lara, Kimi, Ada, Zoe, in that order") wins;
+ * otherwise it falls back to the shared starter-lead rule.
  */
 function statedClosingOrder(config: SessionConfig, turns: Turn[]): AgentConfig[] {
   const call = [...turns].reverse().find((t) => t.turnType === 'call-closings');
@@ -241,9 +263,10 @@ function statedClosingOrder(config: SessionConfig, turns: Turn[]): AgentConfig[]
     const idx = call.text.search(new RegExp(`\\b${n}\\b`, 'i'));
     return { agent, idx };
   });
-  // Only honour a stated order when every agent is named exactly.
-  if (positioned.some((p) => p.idx < 0)) return config.agents;
-  return positioned.sort((a, b) => a.idx - b.idx).map((p) => p.agent);
+  if (!positioned.some((p) => p.idx < 0)) {
+    return positioned.sort((a, b) => a.idx - b.idx).map((p) => p.agent);
+  }
+  return starterLeadOrder(config, call.text);
 }
 
 /** Plan a turn inside the round loop (agents rotate, moderator interjects). */
@@ -307,7 +330,7 @@ function moderatorPlan(
 function agentPlan(
   config: SessionConfig,
   agent: AgentConfig,
-  turnType: Extract<TurnType, 'banter' | 'opening' | 'standard' | 'closing'>,
+  turnType: AgentTurnType,
   instructionOpts: TurnInstructionOpts,
   overrides: { turnClass?: TurnClass; maxWords?: number } = {},
 ): TurnPlan {
@@ -402,9 +425,13 @@ export function planNextTurn(
     }
     const banterReplies = turns.filter((t) => t.turnType === 'banter').length;
     if (banterReplies < N) {
+      // Honour a moderator-named starter ("Ada, you first"), same rule as every
+      // other phase — banter is not exempt from named-address routing (defect).
+      const banterTurn = turns.find((t) => t.turnType === 'moderator-banter');
+      const order = starterLeadOrder(config, banterTurn?.text);
       return agentPlan(
         config,
-        config.agents[banterReplies],
+        order[banterReplies],
         'banter',
         { banter: true },
         { maxWords: 40 },
@@ -430,7 +457,9 @@ export function planNextTurn(
   // 2. Agent openings — honour a moderator-named starter, else config order.
   const openingsDone = turns.filter((t) => t.turnType === 'opening').length;
   if (openingsDone < N) {
-    return agentPlan(config, openingOrder(config, turns)[openingsDone], 'opening', {});
+    const openTurn = turns.find((t) => t.turnType === 'moderator-opening');
+    const order = starterLeadOrder(config, openTurn?.text);
+    return agentPlan(config, order[openingsDone], 'opening', {});
   }
 
   const callClosingsDone = turns.some((t) => t.turnType === 'call-closings');

@@ -3,8 +3,9 @@
 // Adding a new provider touches exactly two files (PRD §6.2): a new adapter
 // module, and one entry in ADAPTER_FACTORIES below (plus its registry rows).
 
-import type { ProviderAdapter, ProviderId } from '@/lib/types';
-import { PROVIDER_ENV_KEY } from '@/config/models';
+import type { ModelEntry, ModelRoute, ProviderAdapter, ProviderId } from '@/lib/types';
+import { OPENROUTER_ENV_KEY, PROVIDER_ENV_KEY } from '@/config/models';
+import { getModelTest } from '@/lib/model-health';
 import { MissingKeyError, ProviderError } from './errors';
 import { TIMEOUT_STATUS } from './http';
 import { createAnthropicAdapter } from './anthropic';
@@ -14,37 +15,46 @@ import { createOpenAIResponsesAdapter } from './openai-responses';
 
 type AdapterFactory = (apiKey: string) => ProviderAdapter;
 
-// OpenAI-compatible providers that share the Chat Completions base. OpenAI is
-// NOT here — it uses its own Responses-API adapter (openai-responses.ts) so it
-// can do web search; these providers only differ from each other by base URL.
-const OPENAI_COMPATIBLE_BASE_URLS: Partial<Record<ProviderId, string>> = {
-  xai: 'https://api.x.ai/v1',
-  deepseek: 'https://api.deepseek.com',
-  mistral: 'https://api.mistral.ai/v1',
-  alibaba: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
-  groq: 'https://api.groq.com/openai/v1',
-  // Meta's Llama API exposes an OpenAI-compatible endpoint.
-  meta: 'https://api.llama.com/compat/v1',
-};
-
-function openAICompatFactory(id: ProviderId): AdapterFactory {
-  const baseUrl = OPENAI_COMPATIBLE_BASE_URLS[id]!;
-  return (key) => createOpenAICompatibleAdapter({ id, baseUrl, apiKey: key });
-}
-
-// Every provider now has a working adapter. Anthropic and Google are bespoke;
-// the rest share the OpenAI-compatible base.
+// DIRECT adapters only. Anthropic/Google are bespoke; OpenAI uses the Responses
+// API (for native web search); Groq is a deliberate OpenAI-compatible exception
+// kept direct for its latency (see README). Every other vendor — xAI, DeepSeek,
+// Meta, Mistral, Alibaba — now routes through OpenRouter (route: 'openrouter')
+// via the single gateway adapter below, so it has no direct factory here.
 const ADAPTER_FACTORIES: Partial<Record<ProviderId, AdapterFactory>> = {
   anthropic: (key) => createAnthropicAdapter(key),
   google: (key) => createGoogleAdapter(key),
   openai: (key) => createOpenAIResponsesAdapter(key),
-  xai: openAICompatFactory('xai'),
-  deepseek: openAICompatFactory('deepseek'),
-  mistral: openAICompatFactory('mistral'),
-  alibaba: openAICompatFactory('alibaba'),
-  groq: openAICompatFactory('groq'),
-  meta: openAICompatFactory('meta'),
+  // Groq stays direct — its whole value is latency; routing it via OpenRouter
+  // could land on a slower host. Deliberate exception, noted in the README.
+  groq: (key) =>
+    createOpenAICompatibleAdapter({
+      id: 'groq',
+      baseUrl: 'https://api.groq.com/openai/v1',
+      apiKey: key,
+    }),
 };
+
+// OpenRouter gateway (OpenAI-compatible). One key routes every non-direct vendor.
+const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+
+// OpenRouter asks callers to identify themselves for dashboard attribution.
+// HTTP-Referer comes from APP_URL (set to the production Vercel URL) so prod
+// attribution is right; falls back to localhost for local dev.
+function openRouterHeaders(): Record<string, string> {
+  return {
+    'HTTP-Referer': process.env.APP_URL || 'http://localhost:3000',
+    'X-Title': 'AI Pod',
+  };
+}
+
+export function getOpenRouterKey(): string | undefined {
+  const val = process.env[OPENROUTER_ENV_KEY];
+  return val && val.trim() ? val.trim() : undefined;
+}
+
+export function hasOpenRouterKey(): boolean {
+  return Boolean(getOpenRouterKey());
+}
 
 export function isProviderImplemented(provider: ProviderId): boolean {
   return provider in ADAPTER_FACTORIES;
@@ -60,20 +70,63 @@ export function hasProviderKey(provider: ProviderId): boolean {
   return Boolean(getProviderKey(provider));
 }
 
-/** A provider is usable iff it has an implemented adapter AND a configured key. */
+/** A provider is usable iff it has an implemented DIRECT adapter AND a key. */
 export function isProviderAvailable(provider: ProviderId): boolean {
   return isProviderImplemented(provider) && hasProviderKey(provider);
 }
 
 /**
- * Resolve a live adapter for a provider. Throws MissingKeyError if the key is
- * absent, or ProviderError if the provider has no adapter yet.
+ * Whether a model has its KEY configured (route-aware). This is the "worth
+ * attempting a call" check — used by the routes that DO the testing so they
+ * always re-test, never gated by a stale cached failure.
  */
-export function getAdapter(provider: ProviderId): ProviderAdapter {
+export function hasModelKey(model: ModelEntry): boolean {
+  return model.route === 'openrouter'
+    ? hasOpenRouterKey()
+    : isProviderAvailable(model.provider);
+}
+
+/**
+ * Whether a model is usable right now: key present AND the last recorded test
+ * didn't fail. A key can be present but the model unusable (e.g. depleted
+ * credits → 402), which only a real call reveals — so once a test has failed we
+ * treat the model as unavailable until it's re-tested. No test yet → fall back
+ * to key presence. Prefer this in selection/UI; use hasModelKey in the test
+ * routes themselves.
+ */
+export function isModelAvailable(model: ModelEntry): boolean {
+  if (!hasModelKey(model)) return false;
+  const t = getModelTest(model.id);
+  return t ? t.ok : true;
+}
+
+/**
+ * Resolve a live adapter. For route 'openrouter' this returns the single gateway
+ * adapter (labelled with the vendor id so errors stay vendor-specific), keyed on
+ * OPENROUTER_API_KEY. For 'direct' it resolves the vendor's own adapter.
+ * Throws MissingKeyError if the relevant key is absent, or ProviderError if no
+ * direct adapter exists for the provider.
+ */
+export function getAdapter(
+  provider: ProviderId,
+  route: ModelRoute = 'direct',
+): ProviderAdapter {
+  if (route === 'openrouter') {
+    const key = getOpenRouterKey();
+    if (!key) {
+      throw new MissingKeyError(provider, OPENROUTER_ENV_KEY);
+    }
+    return createOpenAICompatibleAdapter({
+      id: provider,
+      baseUrl: OPENROUTER_BASE_URL,
+      apiKey: key,
+      extraHeaders: openRouterHeaders(),
+    });
+  }
   const factory = ADAPTER_FACTORIES[provider];
   if (!factory) {
     throw new ProviderError(
-      `No adapter implemented for provider "${provider}" yet.`,
+      `No direct adapter implemented for provider "${provider}" (is it meant to route via OpenRouter?).`,
       { provider },
     );
   }

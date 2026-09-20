@@ -6,7 +6,7 @@
 //
 // Seed data accurate as of 8 September 2026 — verify before first run.
 
-import type { ModelEntry, ProviderId } from '@/lib/types';
+import type { ModelEntry, ModelRoute, ModelTier, ProviderId } from '@/lib/types';
 
 // Which env var holds each provider's API key. Used to compute availability.
 export const PROVIDER_ENV_KEY: Record<ProviderId, string> = {
@@ -33,6 +33,50 @@ export const PROVIDER_LABEL: Record<ProviderId, string> = {
   groq: 'Groq',
 };
 
+// Env var for the single OpenRouter gateway key (route: 'openrouter' models).
+export const OPENROUTER_ENV_KEY = 'OPENROUTER_API_KEY';
+
+// Tier ordering and labels for grouping/sorting in the UI (best → cheapest).
+export const TIER_ORDER: ModelTier[] = ['frontier', 'professional', 'fast'];
+export const TIER_LABEL: Record<ModelTier, string> = {
+  frontier: 'Frontier',
+  professional: 'Professional',
+  fast: 'Fast',
+};
+const TIER_RANK: Record<ModelTier, number> = {
+  frontier: 0,
+  professional: 1,
+  fast: 2,
+};
+/** Distance between two tiers: 0 same, 1 adjacent, 2 frontier↔fast (a real gap). */
+export function tierGap(a: ModelTier, b: ModelTier): number {
+  return Math.abs(TIER_RANK[a] - TIER_RANK[b]);
+}
+
+/** A model's transport, defaulting undefined → 'direct'. */
+export function modelRoute(model: ModelEntry): ModelRoute {
+  return model.route ?? 'direct';
+}
+/** Short transport label for the picker/registry ("OpenRouter" vs "Direct"). */
+export function routeLabel(model: ModelEntry): string {
+  return modelRoute(model) === 'openrouter' ? 'OpenRouter' : 'Direct';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TIERING RULE — assign every model's `tier` by the VENDOR'S OWN POSITIONING,
+// not by price and not by generation:
+//   • frontier     — a model the vendor still sells as flagship-class, EVEN IF a
+//                     newer generation has superseded it (a prev-gen flagship is
+//                     still flagship-class, e.g. Grok 4.5, Qwen3.7 Max).
+//   • professional — a workhorse: the vendor's mid/general model, or an
+//                     open-weight line that doesn't compete with the frontier
+//                     flagships (e.g. Llama 4 Maverick, Mistral Medium).
+//   • fast         — small and cheap, built for latency/volume.
+// Do NOT promote a workhorse to fill an empty frontier slot. Thin tiers are
+// correct: a vendor may have no model at a given tier (see README — Meta and
+// Mistral have no frontier seat, Alibaba has no professional seat, xAI has no
+// fast seat). An unfair matchup is exactly what the tiering exists to prevent.
+// ─────────────────────────────────────────────────────────────────────────────
 export const MODELS: ModelEntry[] = [
   // --- Anthropic ---
   {
@@ -64,7 +108,7 @@ export const MODELS: ModelEntry[] = [
     provider: 'anthropic',
     apiModelString: 'claude-sonnet-5',
     displayName: 'Claude Sonnet 5',
-    tier: 'mid',
+    tier: 'professional',
     contextWindow: 1_000_000,
     inputPricePerMTok: 3.0,
     outputPricePerMTok: 15.0,
@@ -113,7 +157,7 @@ export const MODELS: ModelEntry[] = [
     provider: 'openai',
     apiModelString: 'gpt-5.6-terra',
     displayName: 'GPT-5.6 Terra',
-    tier: 'mid',
+    tier: 'professional',
     contextWindow: 1_050_000,
     inputPricePerMTok: 2.0,
     outputPricePerMTok: 12.0,
@@ -157,13 +201,24 @@ export const MODELS: ModelEntry[] = [
     supportsSystemPrompt: true,
     enabled: true,
   },
-  // --- xAI (adapter arrives Phase 2) ---
+  // ═══════════════════════════════════════════════════════════════════════════
+  // OpenRouter-routed models (route: 'openrouter'). One key, one adapter; the
+  // `provider` field still names the vendor for grouping/pricing. Every row below
+  // was verified live (2026-09) against OpenRouter: a 10-token generation call
+  // AND a strict tool check (emits web_search → uses the result → final text
+  // reflects it). Candidates that generated but wouldn't call the tool, or called
+  // it and returned empty text, were EXCLUDED — see the verification notes in the
+  // batch log. Prices are OpenRouter pass-through ($/Mtok). Prefer clean aliases
+  // over datestamped snapshots.
+  // ═══════════════════════════════════════════════════════════════════════════
+  // --- xAI (via OpenRouter) — no fast seat ---
   {
     id: 'grok-4-6',
     provider: 'xai',
-    apiModelString: 'grok-4.6',
+    apiModelString: 'x-ai/grok-4.6',
     displayName: 'Grok 4.6',
     tier: 'frontier',
+    route: 'openrouter',
     contextWindow: 500_000,
     inputPricePerMTok: 2.0,
     outputPricePerMTok: 6.0,
@@ -173,82 +228,169 @@ export const MODELS: ModelEntry[] = [
   {
     id: 'grok-4-5',
     provider: 'xai',
-    apiModelString: 'grok-4.5',
+    apiModelString: 'x-ai/grok-4.5',
     displayName: 'Grok 4.5',
-    tier: 'mid',
-    contextWindow: 256_000,
-    inputPricePerMTok: null,
-    outputPricePerMTok: null,
+    tier: 'frontier', // prev-gen flagship — still flagship-class (tiering rule)
+    route: 'openrouter',
+    contextWindow: 500_000,
+    inputPricePerMTok: 2.0,
+    outputPricePerMTok: 6.0,
+    supportsSystemPrompt: true,
+    // Verified to refuse the tool at small budgets, call it with headroom.
+    lowToolPropensity: true,
+    needsTokenHeadroomForTools: true,
+    enabled: true,
+  },
+  {
+    id: 'grok-4-3',
+    provider: 'xai',
+    apiModelString: 'x-ai/grok-4.3',
+    displayName: 'Grok 4.3',
+    tier: 'professional',
+    route: 'openrouter',
+    contextWindow: 1_000_000,
+    inputPricePerMTok: 1.25,
+    outputPricePerMTok: 2.5,
     supportsSystemPrompt: true,
     enabled: true,
   },
-  // --- DeepSeek (adapter arrives Phase 2) ---
+  // --- DeepSeek (via OpenRouter) ---
   {
     id: 'deepseek-v4-pro',
     provider: 'deepseek',
-    apiModelString: 'deepseek-v4-pro',
-    displayName: 'DeepSeek-V4-Pro',
+    apiModelString: 'deepseek/deepseek-v4-pro',
+    displayName: 'DeepSeek V4 Pro',
     tier: 'frontier',
+    route: 'openrouter',
     contextWindow: 1_000_000,
-    inputPricePerMTok: 0.66,
-    outputPricePerMTok: 1.98,
+    inputPricePerMTok: 0.42,
+    outputPricePerMTok: 0.84,
     supportsSystemPrompt: true,
     enabled: true,
   },
-  // Real, currently-callable DeepSeek models (verified live). The seed entry
-  // above uses the PRD's speculative id; these resolve against the live API.
   {
-    id: 'deepseek-chat',
+    id: 'deepseek-v3-2',
     provider: 'deepseek',
-    apiModelString: 'deepseek-chat',
-    displayName: 'DeepSeek Chat (V3)',
-    tier: 'frontier',
-    contextWindow: 128_000,
+    apiModelString: 'deepseek/deepseek-v3.2',
+    displayName: 'DeepSeek V3.2',
+    tier: 'professional',
+    route: 'openrouter',
+    contextWindow: 163_840,
     inputPricePerMTok: 0.27,
-    outputPricePerMTok: 1.1,
+    outputPricePerMTok: 0.4,
     supportsSystemPrompt: true,
     enabled: true,
   },
-  // --- Meta (adapter arrives Phase 2) ---
   {
-    id: 'muse-spark-1-3',
-    provider: 'meta',
-    apiModelString: 'muse-spark-1.3',
-    displayName: 'Muse Spark 1.3',
-    tier: 'frontier',
+    id: 'deepseek-v4-flash',
+    provider: 'deepseek',
+    apiModelString: 'deepseek/deepseek-v4-flash',
+    displayName: 'DeepSeek V4 Flash',
+    tier: 'fast',
+    route: 'openrouter',
     contextWindow: 1_000_000,
-    inputPricePerMTok: 1.25,
-    outputPricePerMTok: 4.25,
+    inputPricePerMTok: 0.04,
+    outputPricePerMTok: 0.07,
     supportsSystemPrompt: true,
     enabled: true,
   },
-  // --- Mistral (adapter arrives Phase 2) ---
+  // --- Meta (via OpenRouter) — no frontier seat (open-weight line) ---
   {
-    id: 'mistral-medium-3-5',
-    provider: 'mistral',
-    apiModelString: 'mistral-medium-3-5',
-    displayName: 'Mistral Medium 3.5',
-    tier: 'mid',
-    contextWindow: 256_000,
-    inputPricePerMTok: null,
-    outputPricePerMTok: null,
+    id: 'llama-4-maverick',
+    provider: 'meta',
+    apiModelString: 'meta-llama/llama-4-maverick',
+    displayName: 'Llama 4 Maverick',
+    tier: 'professional',
+    route: 'openrouter',
+    contextWindow: 1_048_576,
+    inputPricePerMTok: 0.19,
+    outputPricePerMTok: 0.65,
     supportsSystemPrompt: true,
     enabled: true,
   },
-  // --- Alibaba (adapter arrives Phase 2) ---
+  {
+    id: 'llama-3-1-8b',
+    provider: 'meta',
+    apiModelString: 'meta-llama/llama-3.1-8b-instruct',
+    displayName: 'Llama 3.1 8B',
+    tier: 'fast',
+    route: 'openrouter',
+    contextWindow: 131_072,
+    inputPricePerMTok: 0.05,
+    outputPricePerMTok: 0.08,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+  // --- Alibaba (via OpenRouter) — no professional seat ---
   {
     id: 'qwen-3-8-max',
     provider: 'alibaba',
-    apiModelString: 'qwen3.8-max',
-    displayName: 'Qwen3.8-Max',
+    apiModelString: 'qwen/qwen3.8-max',
+    displayName: 'Qwen3.8 Max',
     tier: 'frontier',
+    route: 'openrouter',
     contextWindow: 1_000_000,
     inputPricePerMTok: 2.0,
     outputPricePerMTok: 6.0,
     supportsSystemPrompt: true,
+    needsTokenHeadroomForTools: true, // reasoning model — verified
     enabled: true,
   },
-  // --- Groq (fast OpenAI-compatible inference; ids verified live 2026-09) ---
+  {
+    id: 'qwen-3-7-max',
+    provider: 'alibaba',
+    apiModelString: 'qwen/qwen3.7-max',
+    displayName: 'Qwen3.7 Max',
+    tier: 'frontier', // prev-gen flagship — still flagship-class (tiering rule)
+    route: 'openrouter',
+    contextWindow: 1_000_000,
+    inputPricePerMTok: 1.48,
+    outputPricePerMTok: 4.42,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+  {
+    id: 'qwen-3-8-flash',
+    provider: 'alibaba',
+    apiModelString: 'qwen/qwen3.8-flash',
+    displayName: 'Qwen3.8 Flash',
+    tier: 'fast',
+    route: 'openrouter',
+    contextWindow: 1_000_000,
+    inputPricePerMTok: 0.15,
+    outputPricePerMTok: 0.47,
+    supportsSystemPrompt: true,
+    needsTokenHeadroomForTools: true, // reasoning model — verified
+    enabled: true,
+  },
+  // --- Mistral (via OpenRouter) — no frontier seat (Large has no live endpoint) ---
+  {
+    id: 'mistral-medium-3-5',
+    provider: 'mistral',
+    apiModelString: 'mistralai/mistral-medium-3-5',
+    displayName: 'Mistral Medium 3.5',
+    tier: 'professional',
+    route: 'openrouter',
+    contextWindow: 262_144,
+    inputPricePerMTok: 1.5,
+    outputPricePerMTok: 7.5,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+  {
+    id: 'ministral-8b',
+    provider: 'mistral',
+    apiModelString: 'mistralai/ministral-8b-2512',
+    displayName: 'Ministral 8B',
+    tier: 'fast',
+    route: 'openrouter',
+    contextWindow: 262_144,
+    inputPricePerMTok: 0.15,
+    outputPricePerMTok: 0.15,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+  // --- Groq (DIRECT — deliberate exception; see README. ids verified live 2026-09) ---
   {
     id: 'groq-gpt-oss-120b',
     provider: 'groq',
@@ -266,7 +408,7 @@ export const MODELS: ModelEntry[] = [
     provider: 'groq',
     apiModelString: 'qwen/qwen3.8-27b',
     displayName: 'Qwen3.8 27B (Groq)',
-    tier: 'mid',
+    tier: 'professional',
     contextWindow: 131_072,
     inputPricePerMTok: 0.2,
     outputPricePerMTok: 0.6,

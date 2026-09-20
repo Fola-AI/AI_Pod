@@ -67,14 +67,23 @@ export interface TurnSearch {
   latencyMs: number;
 }
 
-export type ModelTier = 'frontier' | 'mid' | 'fast';
+export type ModelTier = 'frontier' | 'professional' | 'fast';
+
+// How a model's API call is transported. 'direct' hits the vendor's own endpoint
+// (Anthropic, OpenAI, Google — plus Groq, a deliberate exception; see README).
+// 'openrouter' routes through OpenRouter's OpenAI-compatible gateway with one key.
+// The `provider` field always names the VENDOR (for grouping/labels/pricing);
+// `route` names the transport. Defaults to 'direct' so existing entries and any
+// saved sessions keep working unchanged.
+export type ModelRoute = 'direct' | 'openrouter';
 
 export interface ModelEntry {
   id: string; // Internal key
-  provider: ProviderId;
+  provider: ProviderId; // The VENDOR (labels, grouping, pricing) — not the transport
   apiModelString: string; // What actually goes in the API call
   displayName: string;
   tier: ModelTier;
+  route?: ModelRoute; // Transport; defaults to 'direct'
   contextWindow: number | null;
   inputPricePerMTok: number | null;
   outputPricePerMTok: number | null;
@@ -87,6 +96,11 @@ export interface ModelEntry {
   // models (they state figures from memory) get forced first-turn search by
   // default (B-5.5). Undefined → provider default.
   lowToolPropensity?: boolean;
+  // Reasoning models that spend tokens thinking before they can emit a tool call
+  // and then use its result. Verified to go silent (empty output, or refusing to
+  // call the tool) when given a small budget on a search-expected turn. The tool
+  // loop must never hand these a sub-500-token budget where search may run.
+  needsTokenHeadroomForTools?: boolean;
   // Per-model calibration for the stated word budget. Some models systematically
   // overrun the word target; a factor < 1 tells them a lower number so actual
   // output lands near maxWordsPerTurn. Defaults to the provider factor, else 1.
@@ -245,6 +259,10 @@ export interface Turn {
   wasEdited: boolean;
   isStale: boolean;
   wasTruncated: boolean; // Retry still hit the token ceiling; flag for the UI/export
+  // How many empty returns preceded this (successful) turn. >0 means the model
+  // blanked and was retried; a model doing this on >half its turns is a roster
+  // problem, flagged on the transcript screen (bug 2). Undefined on older rows.
+  emptyRetries?: number;
   createdAt: string;
 }
 

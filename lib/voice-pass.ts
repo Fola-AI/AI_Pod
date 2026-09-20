@@ -6,7 +6,7 @@
 
 import type { Session } from '@/lib/types';
 import { MODELS, getModel } from '@/config/models';
-import { getAdapter, isProviderAvailable, withRetry } from '@/lib/providers';
+import { getAdapter, isModelAvailable, withRetry } from '@/lib/providers';
 
 export interface TaggedTurn {
   index: number;
@@ -81,12 +81,12 @@ export function countTags(s: string): number {
 
 function pickTaggerModel(session: Session): string | null {
   const preferred = getModel(session.config.moderator.modelId);
-  if (preferred && isProviderAvailable(preferred.provider)) return preferred.id;
+  if (preferred && isModelAvailable(preferred)) return preferred.id;
   const frontier = MODELS.find(
-    (m) => m.tier === 'frontier' && m.enabled && isProviderAvailable(m.provider),
+    (m) => m.tier === 'frontier' && m.enabled && isModelAvailable(m),
   );
   if (frontier) return frontier.id;
-  return MODELS.find((m) => m.enabled && isProviderAvailable(m.provider))?.id ?? null;
+  return MODELS.find((m) => m.enabled && isModelAvailable(m))?.id ?? null;
 }
 
 function parseTagged(text: string): { turnIndex: number; taggedText: string }[] {
@@ -109,7 +109,7 @@ export async function runVoicePass(session: Session): Promise<VoicePassResult> {
   const modelId = pickTaggerModel(session);
   if (!modelId) throw new Error('No available model for the voice pass. Add a provider key.');
   const model = getModel(modelId)!;
-  const adapter = getAdapter(model.provider);
+  const adapter = getAdapter(model.provider, model.route);
 
   const input = session.turns.map((t) => ({
     turnIndex: t.index,

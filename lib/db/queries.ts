@@ -35,6 +35,7 @@ function rowToTurn(r: TurnRow): Turn {
     wasEdited: r.wasEdited,
     isStale: r.isStale,
     wasTruncated: r.wasTruncated,
+    emptyRetries: r.emptyRetries ?? undefined,
     createdAt:
       r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt),
   };
@@ -155,6 +156,7 @@ export async function appendTurn(
       wasEdited: turn.wasEdited,
       isStale: turn.isStale,
       wasTruncated: turn.wasTruncated,
+      emptyRetries: turn.emptyRetries ?? null,
     })
     .returning();
 

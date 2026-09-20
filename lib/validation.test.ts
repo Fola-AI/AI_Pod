@@ -26,9 +26,9 @@ describe('search mode defaults', () => {
       agents: [
         { id: 'a1', displayName: 'A', personaId: 'data-hound', modelId: 'gpt-5-6-sol' },
         { id: 'a2', displayName: 'B', personaId: 'contrarian', modelId: 'grok-4-6' },
-        { id: 'a3', displayName: 'C', personaId: 'pragmatist', modelId: 'deepseek-chat' },
+        { id: 'a3', displayName: 'C', personaId: 'pragmatist', modelId: 'deepseek-v4-pro' },
       ],
-      moderator: { modelId: 'deepseek-chat' },
+      moderator: { modelId: 'deepseek-v4-pro' },
     });
     expect(cfg.webSearch.mode).toBe('shared');
     expect(cfg.webSearch.maxSearchesPerSession).toBe(25);

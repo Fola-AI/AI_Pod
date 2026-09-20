@@ -68,6 +68,8 @@ export const turns = pgTable(
     wasEdited: boolean('was_edited').notNull().default(false),
     isStale: boolean('is_stale').notNull().default(false),
     wasTruncated: boolean('was_truncated').notNull().default(false),
+    // Empty returns that preceded this turn (bug 2). Nullable — older rows have none.
+    emptyRetries: integer('empty_retries'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

@@ -6,9 +6,14 @@ import type { ProviderId } from '@/lib/types';
 
 export function TestConnectionButton({
   provider,
+  modelId,
+  label = 'Test connection',
   disabled,
 }: {
-  provider: ProviderId;
+  provider?: ProviderId;
+  // When set, tests this exact model rather than the provider's first model.
+  modelId?: string;
+  label?: string;
   disabled?: boolean;
 }) {
   const [state, setState] = useState<'idle' | 'testing' | 'pass' | 'fail'>(
@@ -23,7 +28,7 @@ export function TestConnectionButton({
       const res = await fetch('/api/providers/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider }),
+        body: JSON.stringify(modelId ? { modelId } : { provider }),
       });
       const data = await res.json();
       if (data.ok) {
@@ -47,7 +52,7 @@ export function TestConnectionButton({
         onClick={test}
         disabled={disabled || state === 'testing'}
       >
-        {state === 'testing' ? 'Testing…' : 'Test connection'}
+        {state === 'testing' ? 'Testing…' : label}
       </Button>
       {message && (
         <span

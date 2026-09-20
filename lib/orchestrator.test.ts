@@ -3,6 +3,7 @@ import {
   planNextTurn,
   estimateEligibleSlots,
   interjectionProbability,
+  AGENT_TURN_TYPES,
 } from './orchestrator';
 import type { AgentConfig, SessionConfig, Turn } from './types';
 
@@ -283,4 +284,90 @@ describe('moderator-directed routing — dashes, colon, deferral, opening (B-7)'
       turn('a1', 'Lara', 'standard', 'Reply.'),
     ];
   }
+});
+
+describe('named-address routing is applied in EVERY phase (one rule)', () => {
+  const cfg4: SessionConfig = {
+    ...config, // openingBanter: false (base) — banter tests opt in via cfg4Banter
+    agentCount: 4,
+    agents: [
+      agent('a1', 'Lara'),
+      agent('a2', 'Tony'),
+      agent('a3', 'Kimi'),
+      agent('a4', 'Ada'),
+    ],
+  };
+  const cfg4Banter: SessionConfig = { ...cfg4, openingBanter: true };
+  const mod = (text: string, type: Turn['turnType']) =>
+    turn('moderator', 'Moderator', type, text);
+
+  it('BANTER: a moderator-named starter leads, even after greeting everyone (exact defect)', () => {
+    n = 0;
+    // The greeting lists everyone in config order, then names Ada to start — the
+    // pattern that shipped Lara-first with "Moderator asked Ada first, but fine".
+    const turns = [
+      mod('Evening, all. Lara, Tony, Kimi, Ada — good to have you back. Ada, you first.', 'moderator-banter'),
+    ];
+    const plan = planNextTurn(cfg4Banter, turns, {})!;
+    expect(plan.turnType).toBe('banter');
+    expect(plan.speakerId).toBe('a4'); // Ada, not Lara (config order)
+  });
+
+  it('BANTER: falls back to config order when no one is named', () => {
+    n = 0;
+    const turns = [mod('Evening, all. Good to have you back.', 'moderator-banter')];
+    const plan = planNextTurn(cfg4Banter, turns, {})!;
+    expect(plan.turnType).toBe('banter');
+    expect(plan.speakerId).toBe('a1'); // Lara — config order
+  });
+
+  it('OPENING: a moderator-named starter leads', () => {
+    n = 0;
+    const turns = [
+      mod('Welcome. Ada, start us with a number.', 'moderator-opening'),
+    ];
+    const plan = planNextTurn(cfg4, turns, {})!;
+    expect(plan.turnType).toBe('opening');
+    expect(plan.speakerId).toBe('a4'); // Ada
+  });
+
+  it('STANDARD: a moderator interjection routes to the named agent', () => {
+    const turns = [
+      mod('Welcome.', 'moderator-opening'),
+      turn('a1', 'Lara', 'opening', 'Opening.'),
+      turn('a2', 'Tony', 'opening', 'Opening.'),
+      turn('a3', 'Kimi', 'opening', 'Opening.'),
+      turn('a4', 'Ada', 'opening', 'Opening.'),
+      turn('a1', 'Lara', 'standard', 'Reply.'),
+      mod('Kimi, your take?', 'moderator'),
+    ];
+    expect(planNextTurn(cfg4, turns, {})!.speakerId).toBe('a3'); // Kimi
+  });
+
+  it('CLOSING: a stated closing order is honoured', () => {
+    const turns = [
+      mod('Welcome.', 'moderator-opening'),
+      turn('a1', 'Lara', 'opening', 'Opening.'),
+      turn('a2', 'Tony', 'opening', 'Opening.'),
+      turn('a3', 'Kimi', 'opening', 'Opening.'),
+      turn('a4', 'Ada', 'opening', 'Opening.'),
+      mod('Tony, Ada, Lara, Kimi — a closing thought each, in that order.', 'call-closings'),
+    ];
+    const plan = planNextTurn(cfg4, turns, {})!;
+    expect(plan.turnType).toBe('closing');
+    expect(plan.speakerId).toBe('a2'); // Tony first, per the stated order
+  });
+
+  it('GUARD: every agent turn type has routing coverage (fails if a phase is added unrouted)', () => {
+    // If a new agent turn type is added to AGENT_TURN_TYPES, this typed record
+    // stops compiling until a coverage entry is added, and the runtime assertion
+    // fails until the set matches — forcing the new phase through the rule.
+    const COVERED: Record<(typeof AGENT_TURN_TYPES)[number], true> = {
+      banter: true,
+      opening: true,
+      standard: true,
+      closing: true,
+    };
+    expect(Object.keys(COVERED).sort()).toEqual([...AGENT_TURN_TYPES].sort());
+  });
 });

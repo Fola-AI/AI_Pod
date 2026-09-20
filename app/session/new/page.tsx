@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -28,13 +28,26 @@ import { Separator } from '@/components/ui/separator';
 import {
   MODELS,
   PROVIDER_LABEL,
+  TIER_LABEL,
+  TIER_ORDER,
   getModel,
   modelSupportsFunctionCalling,
   providerSupportsWebSearch,
+  routeLabel,
 } from '@/config/models';
 import type { Character, Persona } from '@/lib/types';
 import { FORMAT_LIST, FORMATS, isStanceBearing } from '@/lib/formats';
-import type { ProviderId, SessionFormat, SessionConfig } from '@/lib/types';
+import {
+  buildTierMatchRoster,
+  mixedTierWarning,
+  reshuffleWithinTier,
+} from '@/lib/tiering';
+import type {
+  ModelTier,
+  ProviderId,
+  SessionFormat,
+  SessionConfig,
+} from '@/lib/types';
 
 // How an agent's model will be grounded under the chosen session mode. `ok`
 // means the agent gets live search it can toggle; otherwise the label explains
@@ -63,6 +76,7 @@ import {
   fetchProviders,
   fetchPersonas,
   fetchCharacters,
+  testModel,
 } from '@/lib/client';
 import { estimateSessionCost, formatUsd } from '@/lib/cost';
 import { PRESETS } from '@/lib/presets';
@@ -81,7 +95,7 @@ interface AgentDraft {
   characterId?: string; // optional show-bible character (B-6)
 }
 
-const NAME_POOL = ['Lara', 'Tony', 'Kimi', 'Ada', 'Zoe', 'Ravi'];
+const NAME_POOL = ['Lara', 'Tony', 'Kimi', 'Ada', 'Zoe', 'Ravi', 'Nia', 'Sam', 'Ben'];
 const DEFAULT_PERSONAS = [
   'pragmatist',
   'idealist',
@@ -139,6 +153,22 @@ export default function NewSessionPage() {
   const [forceFirstSearch, setForceFirstSearch] = useState(false);
   const [researchPack, setResearchPack] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Tier-aware selection: filter the pickers to one tier, and remember the last
+  // Tier Match result so the thin-roster note stays visible (not just a toast).
+  const [tierFilter, setTierFilter] = useState<ModelTier | 'all'>('all');
+  const [verifying, setVerifying] = useState(false);
+  // The applied preset stays shown in the control, marked "(modified)" once any
+  // preset-controlled setting changes after applying it.
+  const [presetId, setPresetId] = useState<string | null>(null);
+  const [presetModified, setPresetModified] = useState(false);
+  const applyingPreset = useRef(false); // suppress the modified-effect on apply
+  const [tierMatchInfo, setTierMatchInfo] = useState<{
+    tier: ModelTier;
+    filled: number;
+    missingNoModel: ProviderId[];
+    missingNoKey: ProviderId[];
+    cappedOut: ProviderId[];
+  } | null>(null);
 
   type ProviderStatus = Awaited<ReturnType<typeof fetchProviders>>;
   const [providers, setProviders] = useState<ProviderStatus | null>(null);
@@ -258,6 +288,16 @@ export default function NewSessionPage() {
         ? 'Two or more agents share a model — those voices will sound similar.'
         : null;
 
+  // Route-aware availability, from the /api/providers status (optimistic while
+  // it loads). An OpenRouter vendor is available iff the one gateway key is set.
+  const providerAvailable = (p: ProviderId) => providers?.available?.[p] ?? true;
+
+  // Mixed-tier warning — the reason for this whole feature (same-class pairing).
+  const tierWarn = useMemo(
+    () => mixedTierWarning(agents.map((a) => ({ displayName: a.displayName, modelId: a.modelId }))),
+    [agents],
+  );
+
   function updateAgent(id: string, patch: Partial<AgentDraft>) {
     setAgents((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a)));
   }
@@ -275,9 +315,76 @@ export default function NewSessionPage() {
     toast.success('Personas shuffled — names and models kept');
   }
 
-  function applyPreset(presetId: string) {
-    const preset = PRESETS.find((p) => p.id === presetId);
+  // Shuffle models within each agent's current tier — tiers and names kept,
+  // models stay distinct, and no model with a missing key is picked (P0-3 §4).
+  function shuffleWithinTier() {
+    setAgents((prev) => {
+      const ids = reshuffleWithinTier(prev, providerAvailable);
+      return prev.map((a, i) => ({ ...a, modelId: ids[i] }));
+    });
+    toast.success('Models shuffled within tier — tiers and names kept');
+  }
+
+  // Tier Match preset: one agent per available vendor at the chosen tier, distinct
+  // models guaranteed. Inherits Full Podcast's non-roster settings. States what it
+  // couldn't fill (no model at the tier, or no key) so a thin roster is visibly
+  // deliberate rather than looking like a bug.
+  function applyTierMatch(tier: ModelTier) {
+    const { models, missingNoModel, missingNoKey, cappedOut } = buildTierMatchRoster(
+      tier,
+      providerAvailable,
+    );
+    if (!models.length) {
+      toast.error(`No available models at the ${TIER_LABEL[tier]} tier — add a provider key.`);
+      return;
+    }
+    const fp = PRESETS.find((p) => p.id === 'full-podcast');
+    if (fp) {
+      setFormat(fp.format);
+      setTargetWordCount(fp.targetWordCount);
+      setInterjectionFrequency(fp.interjectionFrequency);
+      if (fp.interjectionRate !== undefined) setInterjectionRate(fp.interjectionRate);
+      if (fp.openingBanter !== undefined) setOpeningBanter(fp.openingBanter);
+      if (fp.webSearchMode !== undefined) setSearchMode(fp.webSearchMode);
+    }
+    setAgents(models.map((m, i) => ({ ...makeAgent(i), modelId: m.id })));
+    setTierFilter(tier); // focus the pickers on the matched tier
+    setTierMatchInfo({ tier, filled: models.length, missingNoModel, missingNoKey, cappedOut });
+    toast.success(`Tier Match — ${models.length} vendors at the ${TIER_LABEL[tier]} tier`);
+  }
+
+  // Verify every distinct model in the roster (agents + moderator) with a real
+  // test call, so a depleted-credits / broken model shows BEFORE committing —
+  // the check that would otherwise only fire at the run screen's pre-flight.
+  async function verifyRosterModels() {
+    const ids = Array.from(new Set([...agents.map((a) => a.modelId), modModelId]));
+    setVerifying(true);
+    try {
+      const results = await Promise.all(
+        ids.map(async (id) => ({ id, r: await testModel(id).catch((e) => ({ ok: false, message: (e as Error).message })) })),
+      );
+      const failed = results.filter((x) => !x.r.ok);
+      // Refresh providers so modelTests (and thus availability) reflect the run.
+      await fetchProviders().then(setProviders).catch(() => {});
+      if (failed.length === 0) {
+        toast.success(`All ${ids.length} models verified callable.`);
+      } else {
+        toast.error(
+          `${failed.length} model(s) failed: ${failed
+            .map((x) => `${getModel(x.id)?.displayName ?? x.id} — ${x.r.message ?? 'failed'}`)
+            .join(' · ')}`,
+          { duration: 12000 },
+        );
+      }
+    } finally {
+      setVerifying(false);
+    }
+  }
+
+  function applyPreset(id: string) {
+    const preset = PRESETS.find((p) => p.id === id);
     if (!preset) return;
+    applyingPreset.current = true; // the resulting state change isn't a "modification"
     setFormat(preset.format);
     setTargetWordCount(preset.targetWordCount);
     setInterjectionFrequency(preset.interjectionFrequency);
@@ -293,8 +400,21 @@ export default function NewSessionPage() {
         stance: pa.stance ?? '',
       })),
     );
+    setPresetId(id);
+    setPresetModified(false);
     toast.success(`Applied preset: ${preset.label}`);
   }
+
+  // Once a preset is applied, mark it "(modified)" as soon as any preset-controlled
+  // setting changes. The apply itself is suppressed via the ref.
+  useEffect(() => {
+    if (!presetId) return;
+    if (applyingPreset.current) {
+      applyingPreset.current = false;
+      return;
+    }
+    setPresetModified(true);
+  }, [presetId, format, targetWordCount, interjectionFrequency, interjectionRate, openingBanter, searchMode, agents]);
 
   async function submit() {
     if (!title.trim()) return toast.error('Add a title.');
@@ -377,27 +497,48 @@ export default function NewSessionPage() {
             Configure the topic, the participants, and the moderator, then run it.
           </p>
         </div>
-        <div className="w-56">
-          <Label className="text-xs">Start from a preset</Label>
-          <Select
-            value={''}
-            onValueChange={(v) => v && applyPreset(v)}
-          >
-            <SelectTrigger>
-              <SelectValue>
-                {(v) =>
-                  PRESETS.find((p) => p.id === v)?.label ?? 'Choose a preset…'
-                }
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {PRESETS.map((p) => (
-                <SelectItem key={p.id} value={p.id}>
-                  {p.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="flex items-end gap-3">
+          <div className="w-48">
+            <Label className="text-xs">Start from a preset</Label>
+            <Select
+              value={presetId ?? ''}
+              onValueChange={(v) => v && applyPreset(v)}
+            >
+              <SelectTrigger>
+                <SelectValue>
+                  {(v) => {
+                    const p = PRESETS.find((x) => x.id === v);
+                    if (!p) return 'Choose a preset…';
+                    return `${p.label}${presetModified ? ' (modified)' : ''}`;
+                  }}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {PRESETS.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="w-44">
+            <Label className="text-xs">Tier Match</Label>
+            <Select value={''} onValueChange={(v) => v && applyTierMatch(v as ModelTier)}>
+              <SelectTrigger>
+                <SelectValue>
+                  {() => 'Pick a tier…'}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {TIER_ORDER.map((t) => (
+                  <SelectItem key={t} value={t}>
+                    {TIER_LABEL[t]} — one per vendor
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </div>
 
@@ -428,6 +569,15 @@ export default function NewSessionPage() {
             {topicWarning && (
               <p className="text-xs text-amber-600 dark:text-amber-500">
                 ⚠ {topicWarning} Consider whether this should be published.
+              </p>
+            )}
+            {presetId && (
+              <p className="text-xs text-muted-foreground">
+                {PRESETS.find((p) => p.id === presetId)?.label}
+                {presetModified ? ' (modified)' : ''}: {agents.length} voices ·{' '}
+                {FORMATS[format].label} · ~{targetWordCount.toLocaleString()} words ·
+                banter {openingBanter ? 'on' : 'off'} · interjections {interjectionRate} ·
+                search {searchMode === 'none' ? 'off' : searchMode}
               </p>
             )}
           </div>
@@ -486,6 +636,23 @@ export default function NewSessionPage() {
             </Button>
             <Button
               type="button"
+              variant="ghost"
+              size="sm"
+              onClick={shuffleWithinTier}
+            >
+              Shuffle models within tier
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={verifyRosterModels}
+              disabled={verifying}
+            >
+              {verifying ? 'Verifying…' : 'Verify models'}
+            </Button>
+            <Button
+              type="button"
               variant="outline"
               size="sm"
               onClick={() => setAgentCount(agents.length - 1)}
@@ -510,6 +677,63 @@ export default function NewSessionPage() {
             3 is cleanest on video, 4 is comfortable. At 5–6, raise the word
             target so everyone gets enough turns.
           </p>
+
+          {/* Tier filter — scopes every model picker below to one tier. */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted-foreground">Show tier:</span>
+            {(['all', ...TIER_ORDER] as const).map((t) => (
+              <Button
+                key={t}
+                type="button"
+                size="sm"
+                variant={tierFilter === t ? 'secondary' : 'ghost'}
+                className="h-7 text-xs"
+                onClick={() => setTierFilter(t)}
+              >
+                {t === 'all' ? 'All' : TIER_LABEL[t]}
+              </Button>
+            ))}
+          </div>
+
+          {tierMatchInfo && (
+            <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs space-y-1">
+              <p className="font-medium">
+                {TIER_LABEL[tierMatchInfo.tier]} tier — {tierMatchInfo.filled}{' '}
+                {tierMatchInfo.filled === 1 ? 'vendor' : 'vendors'} in the roster.
+              </p>
+              {tierMatchInfo.missingNoModel.length > 0 && (
+                <p className="text-muted-foreground">
+                  No model at this tier:{' '}
+                  {tierMatchInfo.missingNoModel.map((p) => PROVIDER_LABEL[p]).join(', ')}.
+                </p>
+              )}
+              {tierMatchInfo.missingNoKey.length > 0 && (
+                <p className="text-muted-foreground">
+                  Unavailable (no key):{' '}
+                  {tierMatchInfo.missingNoKey.map((p) => PROVIDER_LABEL[p]).join(', ')}.
+                </p>
+              )}
+              {tierMatchInfo.cappedOut.length > 0 && (
+                <p className="text-muted-foreground">
+                  Over the {`${tierMatchInfo.filled}`}-agent cap, so omitted:{' '}
+                  {tierMatchInfo.cappedOut.map((p) => PROVIDER_LABEL[p]).join(', ')}.
+                </p>
+              )}
+            </div>
+          )}
+
+          {tierWarn && (
+            <div
+              className={
+                'rounded-md border px-3 py-2 text-xs ' +
+                (tierWarn.severity === 'serious'
+                  ? 'border-amber-500/60 bg-amber-500/10 text-amber-800 dark:text-amber-400'
+                  : 'border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-500')
+              }
+            >
+              ⚠ {tierWarn.message}
+            </div>
+          )}
           {modelWarning && (
             <div
               className={
@@ -614,8 +838,37 @@ export default function NewSessionPage() {
                   <ModelSelect
                     value={a.modelId}
                     status={providers}
+                    tierFilter={tierFilter}
                     onChange={(v) => updateAgent(a.id, { modelId: v })}
                   />
+                  {(() => {
+                    const m = getModel(a.modelId);
+                    if (!m) return null;
+                    const test = providers?.modelTests?.[a.modelId];
+                    return (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Badge variant="secondary" className="text-[10px]">
+                          {TIER_LABEL[m.tier]}
+                        </Badge>
+                        <span className="text-[10px] text-muted-foreground">
+                          {PROVIDER_LABEL[m.provider]} · {routeLabel(m)}
+                        </span>
+                        {test && (
+                          <span
+                            className={
+                              'text-[10px] ' +
+                              (test.ok
+                                ? 'text-emerald-600 dark:text-emerald-500'
+                                : 'text-destructive')
+                            }
+                            title={test.message}
+                          >
+                            {test.ok ? '✓ verified' : `✗ ${test.message ?? 'failed'}`}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
 
@@ -1135,12 +1388,13 @@ function ModelSelect({
   value,
   status,
   onChange,
+  tierFilter = 'all',
 }: {
   value: string;
   status: Awaited<ReturnType<typeof fetchProviders>> | null;
   onChange: (v: string) => void;
+  tierFilter?: ModelTier | 'all';
 }) {
-  const providerList = Array.from(new Set(MODELS.map((m) => m.provider)));
   // Reason a model can't be picked: no adapter, or no key. Null status = loading.
   function pickState(p: ProviderId): { ok: boolean; reason: string } {
     if (!status) return { ok: true, reason: '…' };
@@ -1148,6 +1402,7 @@ function ModelSelect({
     if (!status.hasKey[p]) return { ok: false, reason: 'no key' };
     return { ok: status.available[p], reason: 'unavailable' };
   }
+  const tiers = TIER_ORDER.filter((t) => tierFilter === 'all' || t === tierFilter);
   return (
     <Select value={value} onValueChange={(v) => v && onChange(v)}>
       <SelectTrigger>
@@ -1156,26 +1411,45 @@ function ModelSelect({
         </SelectValue>
       </SelectTrigger>
       <SelectContent>
-        {providerList.map((p) => (
-          <SelectGroup key={p}>
-            <SelectLabel>{PROVIDER_LABEL[p]}</SelectLabel>
-            {MODELS.filter((m) => m.provider === p).map((m) => {
-              const { ok, reason } = pickState(m.provider);
-              return (
-                <SelectItem key={m.id} value={m.id} disabled={!ok}>
-                  <span className="flex items-center gap-2">
-                    {m.displayName}
-                    {!ok && (
-                      <Badge variant="outline" className="text-[10px]">
-                        {reason}
-                      </Badge>
-                    )}
-                  </span>
-                </SelectItem>
-              );
-            })}
-          </SelectGroup>
-        ))}
+        {tiers.map((tier) => {
+          const tierModels = MODELS.filter((m) => m.tier === tier);
+          if (!tierModels.length) return null;
+          const provs = Array.from(new Set(tierModels.map((m) => m.provider)));
+          return (
+            <SelectGroup key={tier}>
+              <SelectLabel className="text-[11px] uppercase tracking-wide text-foreground">
+                {TIER_LABEL[tier]}
+              </SelectLabel>
+              {provs.map((p) => (
+                <Fragment key={`${tier}-${p}`}>
+                  <SelectLabel className="pl-4 text-[10px] font-normal text-muted-foreground">
+                    {PROVIDER_LABEL[p]}
+                  </SelectLabel>
+                  {tierModels
+                    .filter((m) => m.provider === p)
+                    .map((m) => {
+                      const { ok, reason } = pickState(m.provider);
+                      return (
+                        <SelectItem key={m.id} value={m.id} disabled={!ok} className="pl-6">
+                          <span className="flex items-center gap-2">
+                            {m.displayName}
+                            <span className="text-[10px] text-muted-foreground">
+                              {routeLabel(m)}
+                            </span>
+                            {!ok && (
+                              <Badge variant="outline" className="text-[10px]">
+                                {reason}
+                              </Badge>
+                            )}
+                          </span>
+                        </SelectItem>
+                      );
+                    })}
+                </Fragment>
+              ))}
+            </SelectGroup>
+          );
+        })}
       </SelectContent>
     </Select>
   );
