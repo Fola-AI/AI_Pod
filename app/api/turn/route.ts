@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { getSession, appendTurn } from '@/lib/db/queries';
+import { getSession, appendTurn, setSessionError } from '@/lib/db/queries';
 import { planNextTurn } from '@/lib/orchestrator';
 import { executeTurn } from '@/lib/execute-turn';
 import { countWords } from '@/lib/cost';
@@ -78,11 +78,22 @@ export async function POST(request: Request) {
       executed = await executeTurn(session.config, session.turns, activePlan);
     }
   } catch (err) {
-    // An error never becomes a turn — nothing is persisted (P0-2 §1).
+    // An error never becomes a turn — nothing is persisted (P0-2 §1). Record the
+    // cause on the session so it's tracked across reloads and on the dashboard.
     const { status, body } = providerErrorPayload(err, {
       agentId: activePlan.speakerId,
       agentName: activePlan.speakerDisplayName,
       modelId: activePlan.modelId,
+    });
+    await setSessionError(sessionId, {
+      message: body.error,
+      code: body.code,
+      failureClass: body.failureClass,
+      provider: body.provider,
+      agentName: body.agentName,
+      model: body.model,
+      turnIndex: session.turns.length,
+      at: new Date().toISOString(),
     });
     return NextResponse.json(body, { status });
   }
@@ -99,6 +110,16 @@ export async function POST(request: Request) {
         modelId: executed.modelId,
       },
     );
+    await setSessionError(sessionId, {
+      message: body.error,
+      code: body.code,
+      failureClass: body.failureClass,
+      provider: body.provider,
+      agentName: body.agentName,
+      model: body.model,
+      turnIndex: session.turns.length,
+      at: new Date().toISOString(),
+    });
     return NextResponse.json(body, { status });
   }
   // Both interjection attempt and its fallthrough skipped (very unlikely).

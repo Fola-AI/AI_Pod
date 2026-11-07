@@ -17,6 +17,7 @@ import type {
   ClaimConflict,
   ColdOpen,
   SessionConfig,
+  SessionError,
   SessionStatus,
   TurnClass,
   TurnSearch,
@@ -34,6 +35,9 @@ export const sessions = pgTable('sessions', {
   claimConflicts: jsonb('claim_conflicts').$type<ClaimConflict[]>(),
   blockingWarnings: jsonb('blocking_warnings').$type<BlockingWarning[]>(),
   coldOpen: jsonb('cold_open').$type<ColdOpen>(),
+  // Cause of the last run failure (bug 2 follow-up). Nullable; cleared on the
+  // next successful turn or on rerun.
+  lastError: jsonb('last_error').$type<SessionError>(),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()
     .defaultNow(),

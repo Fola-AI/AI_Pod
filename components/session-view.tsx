@@ -20,6 +20,7 @@ import {
   preflight,
   substituteAgentModel,
   removeAgent,
+  resetSession,
   runVoicePass,
   editTaggedText,
   runColdOpen,
@@ -93,6 +94,10 @@ export function SessionView({ initial }: { initial: Session }) {
   const [pendingExport, setPendingExport] = useState<'markdown' | 'pdf' | null>(
     null,
   );
+  // The last run failure, persisted — shown even after the live dialog is closed
+  // or the page is reloaded, until a turn succeeds or the session is rerun.
+  const [lastError, setLastError] = useState(initial.lastError ?? null);
+  const [rerunning, setRerunning] = useState(false);
 
   const runningRef = useRef(false);
   const stopRef = useRef(false);
@@ -156,6 +161,7 @@ export function SessionView({ initial }: { initial: Session }) {
 
         if (res.turn) {
           setTurns((prev) => [...prev, res.turn as Turn]);
+          setLastError(null); // a turn succeeded — the failure is resolved
         }
         setTotalWords(res.totalWords);
         setTotalCostUsd(res.totalCostUsd);
@@ -171,11 +177,23 @@ export function SessionView({ initial }: { initial: Session }) {
       // Fatal → halt and surface the provider's verbatim message with recovery
       // options. Transient (already retried server-side) also halts with Retry.
       setFatal(e);
+      // Mirror it into the persisted-failure banner (the server also recorded it)
+      // so the cause stays visible after the dialog is closed.
+      setLastError({
+        message: e.message,
+        code: e.code ?? 'unknown',
+        failureClass: e.failureClass ?? 'unknown',
+        provider: e.provider,
+        agentName: e.agentName,
+        model: e.model,
+        turnIndex: turns.length,
+        at: new Date().toISOString(),
+      });
     } finally {
       runningRef.current = false;
       setRunning(false);
     }
-  }, [initial.id]);
+  }, [initial.id, turns.length]);
 
   // Pre-flight before turn 1 (P0-3 §2): validate every model, then run.
   const startRun = useCallback(async () => {
@@ -202,6 +220,37 @@ export function SessionView({ initial }: { initial: Session }) {
   function requestStop() {
     stopRef.current = true;
     toast.info('Wrapping up — moving to closing statements.');
+  }
+
+  // Rerun: wipe the transcript and start over from the same config. Destructive.
+  async function handleRerun() {
+    if (running) return;
+    if (
+      !confirm(
+        'Start over? This permanently deletes the current transcript and all its turns. The configuration is kept so you can Run again from scratch.',
+      )
+    )
+      return;
+    setRerunning(true);
+    try {
+      await resetSession(initial.id);
+      setTurns([]);
+      setStatus('draft');
+      setTotalWords(0);
+      setTotalCostUsd(0);
+      setColdOpen(null);
+      setClaims(null);
+      setConflicts([]);
+      setBlockingWarnings([]);
+      setError(null);
+      setFatal(null);
+      setLastError(null);
+      toast.success('Session reset — press Run to start over.');
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setRerunning(false);
+    }
   }
 
   const [busyIndex, setBusyIndex] = useState<number | null>(null);
@@ -489,6 +538,16 @@ export function SessionView({ initial }: { initial: Session }) {
             Retry
           </Button>
         )}
+        {turns.length > 0 && !running && (
+          <Button
+            variant="outline"
+            onClick={handleRerun}
+            disabled={rerunning}
+            title="Delete the transcript and start over from the same configuration"
+          >
+            {rerunning ? 'Resetting…' : 'Rerun'}
+          </Button>
+        )}
         <div className="ml-auto flex items-center gap-4 text-sm text-muted-foreground">
           <span>{turns.length} turns</span>
           <span>
@@ -562,6 +621,24 @@ export function SessionView({ initial }: { initial: Session }) {
       {error && (
         <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
           {error}
+        </div>
+      )}
+
+      {/* Persisted last-failure cause — survives reload/closing the dialog. */}
+      {lastError && !running && status !== 'complete' && (
+        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm space-y-1">
+          <p className="font-medium text-destructive">
+            Last run failed{lastError.agentName ? ` on ${lastError.agentName}` : ''}
+            {lastError.model ? ` (${lastError.model})` : ''} — turn {lastError.turnIndex}
+            {lastError.provider ? ` · ${lastError.provider}` : ''}
+          </p>
+          <p className="text-destructive/90 font-mono text-xs break-words">
+            {lastError.message}
+          </p>
+          <p className="text-[11px] text-muted-foreground">
+            {new Date(lastError.at).toLocaleString()} · fix it (substitute the model or
+            top up the provider) then press Continue, or Rerun to start over.
+          </p>
         </div>
       )}
 

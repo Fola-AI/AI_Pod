@@ -163,6 +163,12 @@ export async function getSession(id: string): Promise<Session> {
   return data.session;
 }
 
+export async function resetSession(id: string): Promise<Session> {
+  const res = await fetch(`/api/sessions/${id}/reset`, { method: 'POST' });
+  const data = await jsonOrThrow(res);
+  return data.session;
+}
+
 export async function deleteSession(id: string): Promise<void> {
   const res = await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
   await jsonOrThrow(res);

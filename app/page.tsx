@@ -89,6 +89,11 @@ export default async function Dashboard() {
                   <span>·</span>
                   <span>{s.createdAt.slice(0, 10)}</span>
                 </div>
+                {s.lastError && s.status !== 'complete' && (
+                  <p className="mt-1 text-xs text-destructive truncate">
+                    ⚠ failed{s.lastError.model ? ` on ${s.lastError.model}` : ''}: {s.lastError.message}
+                  </p>
+                )}
               </div>
               <div className="flex items-center gap-1 shrink-0">
                 <Button

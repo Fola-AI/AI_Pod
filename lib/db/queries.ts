@@ -9,6 +9,7 @@ import type {
   ClaimConflict,
   Session,
   SessionConfig,
+  SessionError,
   SessionStatus,
   Turn,
   TurnSearch,
@@ -53,6 +54,7 @@ function rowToSession(s: SessionRow, ts: TurnRow[]): Session {
     claimConflicts: s.claimConflicts ?? undefined,
     blockingWarnings: s.blockingWarnings ?? undefined,
     coldOpen: s.coldOpen ?? undefined,
+    lastError: s.lastError ?? undefined,
     createdAt:
       s.createdAt instanceof Date ? s.createdAt.toISOString() : String(s.createdAt),
     completedAt: s.completedAt
@@ -97,6 +99,7 @@ export interface SessionSummary {
   participants: string[];
   totalWords: number;
   totalCostUsd: number;
+  lastError?: SessionError;
   createdAt: string;
 }
 
@@ -110,6 +113,7 @@ export async function listSessions(): Promise<SessionSummary[]> {
     participants: s.config.agents.map((a) => a.displayName),
     totalWords: s.totalWords,
     totalCostUsd: s.totalCostUsd,
+    lastError: s.lastError ?? undefined,
     createdAt:
       s.createdAt instanceof Date ? s.createdAt.toISOString() : String(s.createdAt),
   }));
@@ -119,6 +123,39 @@ export async function listSessions(): Promise<SessionSummary[]> {
 
 export async function deleteSession(id: string): Promise<void> {
   await db.delete(sessions).where(eq(sessions.id, id));
+}
+
+/**
+ * Start a session over: delete every turn and reset the row to a fresh draft
+ * (totals, status, post-session artefacts and the last error all cleared). The
+ * config is kept, so Run regenerates from scratch.
+ */
+export async function resetSession(id: string): Promise<Session | null> {
+  await db.delete(turns).where(eq(turns.sessionId, id));
+  const [row] = await db
+    .update(sessions)
+    .set({
+      status: 'draft',
+      totalWords: 0,
+      totalCostUsd: 0,
+      claims: null,
+      claimConflicts: null,
+      blockingWarnings: null,
+      coldOpen: null,
+      lastError: null,
+      completedAt: null,
+    })
+    .where(eq(sessions.id, id))
+    .returning();
+  return row ? rowToSession(row, []) : null;
+}
+
+/** Record the cause of a run failure on the session (surfaced on reload + dashboard). */
+export async function setSessionError(
+  id: string,
+  error: SessionError,
+): Promise<void> {
+  await db.update(sessions).set({ lastError: error }).where(eq(sessions.id, id));
 }
 
 /** Append a turn and update session aggregates atomically-ish (two writes). */
@@ -160,6 +197,8 @@ export async function appendTurn(
     })
     .returning();
 
+  // A turn succeeded, so any previously recorded failure is resolved — clear it.
+
   await db
     .update(sessions)
     .set({
@@ -169,6 +208,7 @@ export async function appendTurn(
       completedAt: aggregates.completedAt
         ? new Date(aggregates.completedAt)
         : null,
+      lastError: null, // this turn succeeded — clear any recorded failure
     })
     .where(eq(sessions.id, sessionId));
 

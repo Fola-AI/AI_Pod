@@ -299,6 +299,20 @@ export interface BlockingWarning {
   citedBy?: string[]; // speakers who cited it earlier
 }
 
+// The cause of the last run failure, persisted on the session so it survives a
+// refresh and shows on the dashboard — not just in the live error dialog. Cleared
+// when a turn next succeeds, or on rerun.
+export interface SessionError {
+  message: string; // the provider's verbatim message
+  code: string; // 'fatal' | 'transient' | 'missing_key' | 'rate_limit' | 'unknown'
+  failureClass: string; // 'fatal' | 'transient' | 'unknown'
+  provider?: string;
+  agentName?: string; // who was speaking when it failed
+  model?: string; // display name of the model that failed
+  turnIndex: number; // the turn index the failure happened at
+  at: string; // ISO timestamp
+}
+
 export interface Session {
   id: string;
   config: SessionConfig;
@@ -310,6 +324,7 @@ export interface Session {
   claimConflicts?: ClaimConflict[]; // Conflicting values + unit errors (B-6)
   blockingWarnings?: BlockingWarning[]; // Publish-stopping problems (B-6)
   coldOpen?: ColdOpen; // Best 15-30s clip candidate (B-6, A-7)
+  lastError?: SessionError; // Cause of the last run failure (null once recovered)
   createdAt: string;
   completedAt?: string;
 }
