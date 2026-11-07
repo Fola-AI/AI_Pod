@@ -321,6 +321,10 @@ export interface Session {
 export interface ToolCall {
   id: string; // Provider's tool-call id, echoed back with the result
   query: string;
+  // Gemini thinking models return a thoughtSignature on the functionCall part;
+  // it MUST be echoed back on that part in the next request or Google 400s
+  // ("Function call is missing a thought_signature"). Ignored by other providers.
+  thoughtSignature?: string;
 }
 
 // A message in the turn exchange. The tool variants appear only in shared-mode

@@ -73,6 +73,9 @@ function buildGoogleContents(messages: ChatMessage[]): any[] {
           ...(m.content ? [{ text: m.content }] : []),
           ...m.toolCalls.map((tc) => ({
             functionCall: { name: WEB_SEARCH_TOOL.name, args: { query: tc.query } },
+            // Echo the thinking model's signature back on the functionCall part,
+            // or Gemini 4xx the next round (thought-signatures requirement).
+            ...(tc.thoughtSignature ? { thoughtSignature: tc.thoughtSignature } : {}),
           })),
         ],
       });
@@ -91,7 +94,13 @@ function parseGoogleToolCalls(parts: any[]): ToolCall[] | undefined {
   const out: ToolCall[] = [];
   parts.forEach((p: any, i: number) => {
     if (p?.functionCall?.name === WEB_SEARCH_TOOL.name) {
-      out.push({ id: `fc_${i}`, query: String(p.functionCall.args?.query ?? '') });
+      out.push({
+        id: `fc_${i}`,
+        query: String(p.functionCall.args?.query ?? ''),
+        // Preserve the thinking model's signature so it can be echoed back next
+        // round (required by Gemini, dropped before — the source of the 400).
+        thoughtSignature: p.thoughtSignature,
+      });
     }
   });
   return out.length ? out : undefined;
