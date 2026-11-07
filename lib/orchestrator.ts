@@ -18,6 +18,7 @@ import {
   SLOT_TURN_TYPE,
 } from '@/lib/structured-rounds';
 import { countWords } from '@/lib/cost';
+import { nameRegex } from '@/lib/name-match';
 import type { TurnInstructionOpts } from '@/lib/prompts';
 
 export const MODERATOR_ID = 'moderator';
@@ -180,9 +181,6 @@ function shouldBeginClosings(
   return words >= roundTarget && roundComplete;
 }
 
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 /**
  * If a moderator turn (opening or interjection) names a participant, that
@@ -209,8 +207,7 @@ function scanAddresses(config: SessionConfig, text: string) {
   const allAddressed: { agent: AgentConfig; idx: number }[] = [];
   let mentioned: { agent: AgentConfig; idx: number } | null = null;
   for (const agent of config.agents) {
-    const n = escapeRegex(agent.displayName);
-    const re = new RegExp(`\\b${n}\\b`, 'gi');
+    const re = nameRegex(agent.displayName, 'giu');
     let m: RegExpExecArray | null;
     while ((m = re.exec(text)) !== null) {
       const idx = m.index;
@@ -269,14 +266,32 @@ function statedClosingOrder(config: SessionConfig, turns: Turn[]): AgentConfig[]
   const call = [...turns].reverse().find((t) => t.turnType === 'call-closings');
   if (!call) return config.agents;
   const positioned = config.agents.map((agent) => {
-    const n = escapeRegex(agent.displayName);
-    const idx = call.text.search(new RegExp(`\\b${n}\\b`, 'i'));
+    const idx = call.text.search(nameRegex(agent.displayName));
     return { agent, idx };
   });
   if (!positioned.some((p) => p.idx < 0)) {
     return positioned.sort((a, b) => a.idx - b.idx).map((p) => p.agent);
   }
   return starterLeadOrder(config, call.text);
+}
+
+/**
+ * The next agent in the round-robin. Rotation counts full standard turns, and a
+ * moderator-directed answer counts too — so rotation can land on the agent who
+ * just answered (Nigeria 2027, #22→#23: Eniola twice). Never give the same agent
+ * two full turns in a row: if rotation picks the last full speaker, move on one.
+ */
+function nextRotationAgent(config: SessionConfig, turns: Turn[]): AgentConfig {
+  const fullStandardCount = turns.filter(
+    (t) => t.turnType === 'standard' && t.turnClass !== 'interjection',
+  ).length;
+  const i = fullStandardCount % config.agentCount;
+  const lastFull = [...turns].reverse().find((t) => t.turnClass !== 'interjection');
+  const pick = config.agents[i];
+  if (config.agentCount > 1 && lastFull && lastFull.speakerId === pick.id) {
+    return config.agents[(i + 1) % config.agentCount];
+  }
+  return pick;
 }
 
 /** Plan a turn inside the round loop (agents rotate, moderator interjects). */
@@ -295,7 +310,7 @@ function planRoundTurn(config: SessionConfig, turns: Turn[]): TurnPlan {
   const fullStandardCount = turns.filter(
     (t) => t.turnType === 'standard' && t.turnClass !== 'interjection',
   ).length;
-  const nextFullAgent = config.agents[fullStandardCount % config.agentCount];
+  const nextFullAgent = nextRotationAgent(config, turns);
 
   // (Agent reaction interjections are handled in planNextTurn, before the phase
   // logic, so openings are eligible too — see maybeAgentInterjection.)
@@ -399,13 +414,15 @@ function maybeAgentInterjection(
 
   const N = config.agentCount;
   const openingsDone = turns.filter((t) => t.turnType === 'opening').length;
-  const fullStandardCount = turns.filter(
-    (t) => t.turnType === 'standard' && t.turnClass !== 'interjection',
-  ).length;
+  // Who speaks next in full — same rules the planner uses, so the reactor is
+  // never the person about to take the floor.
   const nextFullId =
     openingsDone < N
-      ? config.agents[openingsDone].id
-      : config.agents[fullStandardCount % N].id;
+      ? starterLeadOrder(
+          config,
+          turns.find((t) => t.turnType === 'moderator-opening')?.text,
+        )[openingsDone].id
+      : nextRotationAgent(config, turns).id;
   const reactor = pickInterjector(config, last.speakerId, nextFullId);
   if (!reactor) return null;
   return agentPlan(

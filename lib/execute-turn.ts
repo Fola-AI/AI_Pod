@@ -226,18 +226,19 @@ export async function executeTurn(
         systemPrompt,
         messages: [{ role: 'user', content: userMessage }],
         temperature: plan.temperature,
-        maxTokens: 100,
+        // The prompt keeps reactions to 3–15 words; this ceiling is headroom so
+        // a reasoning model isn't cut off mid-reaction (the old 100-token cap
+        // exported "Aisha, measurable revenue is not").
+        maxTokens: INTERJECTION_MAX_TOKENS,
       }),
     );
-    const text = result.text.replace(/\[SKIP\]/gi, '').trim();
-    // [SKIP] or nothing usable → no turn (better than a forced reaction).
-    if (text.length === 0) return null;
-    return buildTurn(
-      { ...result, text },
-      result.stopReason === 'max_tokens',
-      undefined,
-      false,
-    );
+    const raw = result.text.replace(/\[SKIP\]/gi, '').trim();
+    // [SKIP], nothing usable, or only a fragment → no turn (the route falls
+    // through to the next full turn). A cut-off reaction is never stored.
+    const cut = result.stopReason === 'max_tokens';
+    const text = cleanInterjection(raw, cut);
+    if (!text) return null;
+    return buildTurn({ ...result, text }, cut, undefined, false);
   }
 
   // Feed this speaker their own last one or two openers so they vary (agents
@@ -438,6 +439,30 @@ export function turnWordCount(t: { text: string }): number {
  * mid-sentence (standing rule 2). Returns '' if no usable complete sentence
  * remains (caller then treats it as unusable rather than persisting a fragment).
  */
+const INTERJECTION_MAX_TOKENS = 1000;
+const INTERJECTION_MAX_WORDS = 30;
+
+/**
+ * Make an interjection safe to store, or return '' to skip it. A reaction that
+ * finished naturally and is short is kept as written (a spoken aside may lack a
+ * full stop). If it was cut off, or ran long, keep only whole sentences from the
+ * start, up to the word cap — never a fragment.
+ */
+export function cleanInterjection(text: string, cut: boolean): string {
+  const t = text.trim();
+  if (!t) return '';
+  const words = (s: string) => s.split(/\s+/).filter(Boolean).length;
+  if (!cut && words(t) <= INTERJECTION_MAX_WORDS) return t;
+  const sentences = t.match(/[^.!?…]+[.!?…]+["'’”)\]]*/g) ?? [];
+  let out = '';
+  for (const s of sentences) {
+    const next = `${out} ${s.trim()}`.trim();
+    if (words(next) > INTERJECTION_MAX_WORDS) break;
+    out = next;
+  }
+  return out;
+}
+
 export function trimToLastSentence(text: string): string {
   const t = text.trim();
   const m = t.match(/^[\s\S]*[.!?…]["'’)\]]*/);

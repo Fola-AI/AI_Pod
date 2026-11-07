@@ -48,7 +48,7 @@ export async function POST(
   // Regenerating an interjection that came back [SKIP] — nothing to write.
   if (executed === null) {
     return NextResponse.json(
-      { error: 'The model declined to react ([SKIP]). Try again.' },
+      { error: 'The model declined to react, or its reaction was cut off. Try again.' },
       { status: 409 },
     );
   }

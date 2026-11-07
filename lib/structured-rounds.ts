@@ -2,6 +2,7 @@
 // when, and on what: the full turn plan is computed when the session is created,
 // persisted with it, and executed slot by slot. Pure functions — no I/O.
 
+import { nameRegex } from '@/lib/name-match';
 import type {
   AgentConfig,
   PlanSlot,
@@ -180,13 +181,10 @@ export function agentAliases(agent: AgentConfig): string[] {
   return Array.from(new Set(base.filter(Boolean)));
 }
 
-function escapeRe(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 // Unicode-aware whole-word match: JS \\b is ASCII-only, so "Bogotá" or
 // "São Paulo" would never match with it (false rebuttal_incomplete flags).
 function nameRe(n: string): RegExp {
-  return new RegExp(`(?<![\\p{L}\\p{N}])${escapeRe(n)}(?![\\p{L}\\p{N}])`, 'iu');
+  return nameRegex(n);
 }
 function mentions(text: string, names: string[]): boolean {
   return names.some((n) => nameRe(n).test(text));
