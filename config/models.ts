@@ -233,6 +233,10 @@ export const MODELS: ModelEntry[] = [
     displayName: 'Grok 4.7',
     tier: 'frontier', // newest xAI flagship (verified live 2026-11: gen + tool call)
     route: 'openrouter',
+    // Reasoning is mandatory and defaults to 'high', unbounded by max_tokens:
+    // measured 52-98s per turn in a real session (over the turn time limit).
+    // 'low' measured 32s with grounding intact.
+    reasoningEffort: 'low',
     contextWindow: 500_000,
     inputPricePerMTok: 2.0,
     outputPricePerMTok: 6.0,
@@ -246,6 +250,10 @@ export const MODELS: ModelEntry[] = [
     displayName: 'Grok 4.6',
     tier: 'frontier',
     route: 'openrouter',
+    // Reasoning is mandatory and defaults to 'high', unbounded by max_tokens:
+    // measured 52-98s per turn in a real session (over the turn time limit).
+    // 'low' measured 32s with grounding intact.
+    reasoningEffort: 'low',
     contextWindow: 500_000,
     inputPricePerMTok: 2.0,
     outputPricePerMTok: 6.0,
@@ -259,6 +267,10 @@ export const MODELS: ModelEntry[] = [
     displayName: 'Grok 4.5',
     tier: 'frontier', // prev-gen flagship — still flagship-class (tiering rule)
     route: 'openrouter',
+    // Reasoning is mandatory and defaults to 'high', unbounded by max_tokens:
+    // measured 52-98s per turn in a real session (over the turn time limit).
+    // 'low' measured 32s with grounding intact.
+    reasoningEffort: 'low',
     contextWindow: 500_000,
     inputPricePerMTok: 2.0,
     outputPricePerMTok: 6.0,

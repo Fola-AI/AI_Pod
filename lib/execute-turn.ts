@@ -207,6 +207,7 @@ export async function executeTurn(
     const result = await withRetry(() =>
       adapter.generate({
         apiModelString: model.apiModelString,
+      reasoningEffort: model.reasoningEffort,
         systemPrompt,
         messages: [{ role: 'user', content: userMessage }],
         temperature: plan.temperature,
@@ -250,6 +251,7 @@ export async function executeTurn(
   ): Promise<{ result: GenerateResult; searches?: TurnSearch[]; degraded: boolean }> => {
     const base = {
       apiModelString: model.apiModelString,
+      reasoningEffort: model.reasoningEffort,
       systemPrompt,
       messages: [{ role: 'user' as const, content: userMessage }],
       temperature: plan.temperature,

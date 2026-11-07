@@ -43,14 +43,23 @@ import {
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
 import { formatUsd } from '@/lib/cost';
 import { FORMATS } from '@/lib/formats';
 import { getPersona } from '@/lib/personas';
-import { getModel, MODELS } from '@/config/models';
+import {
+  getModel,
+  MODELS,
+  PROVIDER_LABEL,
+  TIER_LABEL,
+  TIER_ORDER,
+  routeLabel,
+} from '@/config/models';
 import {
   toJson,
   toMarkdown,
@@ -98,6 +107,12 @@ export function SessionView({ initial }: { initial: Session }) {
   // or the page is reloaded, until a turn succeeds or the session is rerun.
   const [lastError, setLastError] = useState(initial.lastError ?? null);
   const [rerunning, setRerunning] = useState(false);
+  // Switch a participant's model at any time — including mid-run, when a model
+  // errors or stops responding. Applies from the next turn the server plans.
+  const [switchOpen, setSwitchOpen] = useState(false);
+  const [switchAgentId, setSwitchAgentId] = useState('');
+  const [switchModelId, setSwitchModelId] = useState('');
+  const [switching, setSwitching] = useState(false);
 
   const runningRef = useRef(false);
   const stopRef = useRef(false);
@@ -223,6 +238,41 @@ export function SessionView({ initial }: { initial: Session }) {
   }
 
   // Rerun: wipe the transcript and start over from the same config. Destructive.
+  // Open the switch dialog, preselecting whoever just failed (if anyone).
+  function openSwitch() {
+    const failedId =
+      fatal?.agentId ??
+      config.agents.find((a) => a.displayName === lastError?.agentName)?.id ??
+      (lastError?.agentName === config.moderator.displayName ? MODERATOR_ID : undefined);
+    setSwitchAgentId(failedId ?? config.agents[0]?.id ?? MODERATOR_ID);
+    setSwitchModelId('');
+    setSwitchOpen(true);
+  }
+
+  async function confirmSwitch() {
+    if (!switchAgentId || !switchModelId) return;
+    setSwitching(true);
+    try {
+      const updated = await substituteAgentModel(initial.id, switchAgentId, switchModelId);
+      setConfig(updated.config);
+      setSwitchOpen(false);
+      const who =
+        switchAgentId === MODERATOR_ID
+          ? config.moderator.displayName || 'Moderator'
+          : config.agents.find((a) => a.id === switchAgentId)?.displayName;
+      const to = getModel(switchModelId)?.displayName ?? switchModelId;
+      toast.success(
+        running
+          ? `${who} switched to ${to} — applies from their next turn.`
+          : `${who} switched to ${to}. Press Continue to resume.`,
+      );
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setSwitching(false);
+    }
+  }
+
   async function handleRerun() {
     if (running) return;
     if (
@@ -546,6 +596,15 @@ export function SessionView({ initial }: { initial: Session }) {
             title="Delete the transcript and start over from the same configuration"
           >
             {rerunning ? 'Resetting…' : 'Rerun'}
+          </Button>
+        )}
+        {!complete && (
+          <Button
+            variant="outline"
+            onClick={openSwitch}
+            title="Change a participant's model — works mid-run, from their next turn"
+          >
+            Switch model
           </Button>
         )}
         <div className="ml-auto flex items-center gap-4 text-sm text-muted-foreground">
@@ -889,6 +948,97 @@ export function SessionView({ initial }: { initial: Session }) {
       )}
 
       {/* Fatal provider failure (P0-2 §3, §4) */}
+      <Dialog open={switchOpen} onOpenChange={(o) => !o && setSwitchOpen(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Switch model</DialogTitle>
+            <DialogDescription>
+              {running
+                ? 'The run keeps going. The new model takes over from this participant’s next turn (a turn already in progress finishes on the old one).'
+                : 'Change a participant’s model, then press Continue to resume.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <p className="text-xs text-muted-foreground">Participant</p>
+              <Select value={switchAgentId} onValueChange={(v) => v && setSwitchAgentId(v)}>
+                <SelectTrigger className="w-full">
+                  <SelectValue>
+                    {(v) => {
+                      if (v === MODERATOR_ID) {
+                        return `${config.moderator.displayName || 'Moderator'} — ${getModel(config.moderator.modelId)?.displayName ?? config.moderator.modelId}`;
+                      }
+                      const a = config.agents.find((x) => x.id === v);
+                      return a
+                        ? `${a.displayName} — ${getModel(a.modelId)?.displayName ?? a.modelId}`
+                        : 'Pick a participant';
+                    }}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {config.agents.map((a) => (
+                    <SelectItem key={a.id} value={a.id}>
+                      {a.displayName} — {getModel(a.modelId)?.displayName ?? a.modelId}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value={MODERATOR_ID}>
+                    {config.moderator.displayName || 'Moderator'} —{' '}
+                    {getModel(config.moderator.modelId)?.displayName ?? config.moderator.modelId}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-xs text-muted-foreground">New model</p>
+              <Select value={switchModelId} onValueChange={(v) => v && setSwitchModelId(v)}>
+                <SelectTrigger className="w-full">
+                  <SelectValue>
+                    {(v) => MODELS.find((m) => m.id === v)?.displayName ?? 'Pick a model'}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {TIER_ORDER.map((tier) => {
+                    const current =
+                      switchAgentId === MODERATOR_ID
+                        ? config.moderator.modelId
+                        : config.agents.find((a) => a.id === switchAgentId)?.modelId;
+                    const tierModels = MODELS.filter(
+                      (m) => m.enabled && m.tier === tier && m.id !== current,
+                    );
+                    if (!tierModels.length) return null;
+                    return (
+                      <SelectGroup key={tier}>
+                        <SelectLabel className="text-[11px] uppercase tracking-wide">
+                          {TIER_LABEL[tier]}
+                        </SelectLabel>
+                        {tierModels.map((m) => (
+                          <SelectItem key={m.id} value={m.id}>
+                            <span className="flex items-center gap-2">
+                              {m.displayName}
+                              <span className="text-[10px] text-muted-foreground">
+                                {PROVIDER_LABEL[m.provider]} · {routeLabel(m)}
+                              </span>
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setSwitchOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={confirmSwitch} disabled={!switchAgentId || !switchModelId || switching}>
+              {switching ? 'Switching…' : 'Switch'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!fatal} onOpenChange={(o) => !o && setFatal(null)}>
         <DialogContent>
           <DialogHeader>

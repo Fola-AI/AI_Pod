@@ -121,6 +121,8 @@ export function createOpenAICompatibleAdapter(
         messages: wire,
         [tokenParam]: params.maxTokens,
         ...(useTemperature ? { temperature: params.temperature } : {}),
+        // Bound a reasoning model's hidden thinking (OpenRouter `reasoning`).
+        ...(params.reasoningEffort ? { reasoning: { effort: params.reasoningEffort } } : {}),
         // Shared web_search function tool (B-5.5).
         ...(params.searchTool
           ? {

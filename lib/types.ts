@@ -77,6 +77,9 @@ export type ModelTier = 'frontier' | 'professional' | 'fast';
 // saved sessions keep working unchanged.
 export type ModelRoute = 'direct' | 'openrouter';
 
+// OpenRouter reasoning-effort levels (see openrouter.ai/docs/use-cases/reasoning-tokens).
+export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+
 export interface ModelEntry {
   id: string; // Internal key
   provider: ProviderId; // The VENDOR (labels, grouping, pricing) — not the transport
@@ -101,6 +104,11 @@ export interface ModelEntry {
   // call the tool) when given a small budget on a search-expected turn. The tool
   // loop must never hand these a sub-500-token budget where search may run.
   needsTokenHeadroomForTools?: boolean;
+  // Cap a reasoning model's hidden thinking. Some models (Grok 4.x via
+  // OpenRouter) reason at 'high' by default and that reasoning is NOT bounded by
+  // max_tokens — a single call can think for 60s+ and thousands of billed tokens,
+  // blowing the turn's time limit. Unset → the provider default.
+  reasoningEffort?: ReasoningEffort;
   // Per-model calibration for the stated word budget. Some models systematically
   // overrun the word target; a factor < 1 tells them a lower number so actual
   // output lands near maxWordsPerTurn. Defaults to the provider factor, else 1.
@@ -364,6 +372,9 @@ export interface GenerateParams {
   // (some models compulsively call tools and 400 if the array is just dropped);
   // 'required' forces a call (used to guarantee each agent grounds once).
   toolChoice?: 'auto' | 'none' | 'required';
+  // Reasoning effort for models that reason by default (sent as OpenRouter's
+  // `reasoning: { effort }`). Unset → the provider's default.
+  reasoningEffort?: ReasoningEffort;
 }
 
 // Normalised finish reason across providers.

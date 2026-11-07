@@ -5,11 +5,37 @@ import { planNextTurn } from '@/lib/orchestrator';
 import { executeTurn } from '@/lib/execute-turn';
 import { countWords } from '@/lib/cost';
 import { providerErrorPayload } from '@/lib/provider-error-response';
-import { EmptyContentError } from '@/lib/providers/errors';
+import { EmptyContentError, ProviderError } from '@/lib/providers/errors';
+import { getModel } from '@/config/models';
 
 export const runtime = 'nodejs';
-// One turn = one provider call. Give the function room for a slow model.
-export const maxDuration = 60;
+// A turn can be several model calls (shared-search tool rounds + validation
+// retries) on a slow reasoning model. 300s is the Vercel Hobby maximum with Fluid
+// Compute; the old 60s cap silently killed Grok turns mid-flight.
+export const maxDuration = 300;
+
+// Soft deadline, safely inside maxDuration: if a turn runs this long we stop
+// waiting and RECORD the cause, rather than letting the platform kill the
+// function (which leaves no trace and just stops the run).
+const TURN_SOFT_DEADLINE_MS = 270_000;
+
+function withTurnDeadline<T>(work: Promise<T>, modelId: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const model = getModel(modelId);
+      reject(
+        new ProviderError(
+          `${model?.displayName ?? modelId} did not finish the turn within ${Math.round(
+            TURN_SOFT_DEADLINE_MS / 1000,
+          )}s (model too slow or not responding). Switch this participant's model or press Continue to retry.`,
+          { provider: model?.provider ?? 'unknown', failureClass: 'fatal', status: 504 },
+        ),
+      );
+    }, TURN_SOFT_DEADLINE_MS);
+  });
+  return Promise.race([work, deadline]).finally(() => clearTimeout(timer));
+}
 
 const bodySchema = z.object({
   sessionId: z.string().min(1),
@@ -58,7 +84,10 @@ export async function POST(request: Request) {
   let activePlan = initialPlan;
   let executed;
   try {
-    executed = await executeTurn(session.config, session.turns, activePlan);
+    executed = await withTurnDeadline(
+      executeTurn(session.config, session.turns, activePlan),
+      activePlan.modelId,
+    );
     // Interjection returned [SKIP] (null): fall through to the next full turn
     // in the same request — no empty response, no re-roll loop (A-1).
     if (executed === null) {
@@ -75,7 +104,10 @@ export async function POST(request: Request) {
         });
       }
       activePlan = fallthrough;
-      executed = await executeTurn(session.config, session.turns, activePlan);
+      executed = await withTurnDeadline(
+        executeTurn(session.config, session.turns, activePlan),
+        activePlan.modelId,
+      );
     }
   } catch (err) {
     // An error never becomes a turn — nothing is persisted (P0-2 §1). Record the
