@@ -213,6 +213,19 @@ export const MODELS: ModelEntry[] = [
   // ═══════════════════════════════════════════════════════════════════════════
   // --- xAI (via OpenRouter) — no fast seat ---
   {
+    id: 'grok-4-7',
+    provider: 'xai',
+    apiModelString: 'x-ai/grok-4.7',
+    displayName: 'Grok 4.7',
+    tier: 'frontier', // newest xAI flagship (verified live 2026-11: gen + tool call)
+    route: 'openrouter',
+    contextWindow: 500_000,
+    inputPricePerMTok: 2.0,
+    outputPricePerMTok: 6.0,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+  {
     id: 'grok-4-6',
     provider: 'xai',
     apiModelString: 'x-ai/grok-4.6',
