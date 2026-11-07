@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { SessionConfig } from '@/lib/types';
 import { getModel, providerSupportsWebSearch } from '@/config/models';
 import { isStanceBearing } from '@/lib/formats';
+import { buildPlan, SR_MAX_ROUNDS, SR_MIN_ROUNDS } from '@/lib/structured-rounds';
 
 export const MIN_AGENTS = 3;
 export const MAX_AGENTS = 6;
@@ -22,6 +23,22 @@ const agentSchema = z.object({
   webSearchEnabled: z.boolean().optional(),
   forceFirstSearch: z.boolean().optional(),
   characterId: z.string().optional(),
+  // Structured Rounds: the candidate this advocate argues for + name aliases.
+  candidate: z.string().optional(),
+  aliases: z.array(z.string()).optional(),
+});
+
+const structuredRoundsSchema = z.object({
+  rounds: z
+    .array(z.object({ id: z.string().min(1), title: z.string(), brief: z.string().optional() }))
+    .min(SR_MIN_ROUNDS)
+    .max(SR_MAX_ROUNDS),
+  presentationWords: z.number().int().min(50).max(2000).default(450),
+  rebuttalWords: z.number().int().min(50).max(2000).default(300),
+  speakerIntros: z.boolean().default(true),
+  advocateClosings: z.boolean().default(false),
+  closingWords: z.number().int().min(30).max(1000).default(150),
+  baseOrder: z.array(z.string()).default([]),
 });
 
 const relationshipSchema = z.object({
@@ -58,6 +75,7 @@ export const createSessionSchema = z
       'shared-curiosity',
       'quickfire',
       'story-swap',
+      'structured-rounds',
     ]),
     domain: z.string().default('general'),
     sourceMaterial: z.array(sourceDocSchema).optional(),
@@ -72,6 +90,7 @@ export const createSessionSchema = z
       .default('medium'),
     openingBanter: z.boolean().default(true),
     relationships: z.array(relationshipSchema).optional(),
+    structuredRounds: structuredRoundsSchema.optional(),
     webSearch: z
       .object({
         mode: z.enum(['none', 'shared', 'native']).default('shared'),
@@ -109,6 +128,28 @@ export function validateReferences(input: CreateSessionInput): string[] {
   if (!getModel(input.moderator.modelId)) {
     errors.push(`Unknown moderator model: ${input.moderator.modelId}`);
   }
+  // Structured Rounds (B1/B2): stances and candidates are mandatory, every round
+  // needs a theme, and the advocate order must cover exactly the agents. Only
+  // enforced at Create session — drafts may be incomplete.
+  if (input.format === 'structured-rounds') {
+    const sr = input.structuredRounds;
+    if (!sr) {
+      errors.push('Structured Rounds needs its rounds configuration.');
+    } else {
+      sr.rounds.forEach((r, i) => {
+        if (!r.title.trim()) errors.push(`Round ${i + 1} needs a theme.`);
+      });
+      const ids = new Set(input.agents.map((a) => a.id));
+      const order = sr.baseOrder.length ? sr.baseOrder : input.agents.map((a) => a.id);
+      if (order.length !== ids.size || !order.every((id) => ids.has(id))) {
+        errors.push('The advocate order must list every advocate exactly once.');
+      }
+    }
+    for (const a of input.agents) {
+      if (!a.stance?.trim()) errors.push(`${a.displayName} needs a stance.`);
+      if (!a.candidate?.trim()) errors.push(`${a.displayName} needs a candidate.`);
+    }
+  }
   // Native mode requires every agent on a provider with native search — the
   // session may not mix native and unsupported providers (B-5.5, criterion 8).
   if (input.webSearch?.mode === 'native') {
@@ -142,6 +183,17 @@ export function toSessionConfig(input: CreateSessionInput): SessionConfig {
     openingBanter: input.openingBanter,
     relationships: input.relationships,
     webSearch: input.webSearch,
+    // Structured Rounds: compute the full turn plan now and persist it with the
+    // session — from here on it is fixed and executed slot by slot (B4).
+    structuredRounds:
+      input.format === 'structured-rounds' && input.structuredRounds
+        ? (() => {
+            const sr = input.structuredRounds!;
+            const baseOrder = sr.baseOrder.length ? sr.baseOrder : input.agents.map((a) => a.id);
+            const cfg = { ...sr, baseOrder };
+            return { ...cfg, plan: buildPlan(cfg) };
+          })()
+        : undefined,
     createdAt: new Date().toISOString(),
   };
 }

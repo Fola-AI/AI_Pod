@@ -67,6 +67,14 @@ import {
   toElevenLabsScript,
 } from '@/lib/export';
 import { MODERATOR_ID } from '@/lib/orchestrator';
+import { slotLabel } from '@/lib/structured-rounds';
+
+/** Readable names for Structured Rounds validation flags (B8). */
+const FLAG_LABEL: Record<string, string> = {
+  presentation_missing_candidate: 'own candidate not named',
+  rebuttal_incomplete: 'rebuttal missed a rival',
+  moderator_rule: 'moderator broke a rule',
+};
 
 function formatDuration(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -94,6 +102,7 @@ export function SessionView({ initial }: { initial: Session }) {
   const [error, setError] = useState<string | null>(null);
 
   const [config, setConfig] = useState<SessionConfig>(initial.config);
+  const isSR = config.format === 'structured-rounds';
   const [fatal, setFatal] = useState<ApiError | null>(null);
   const [preflightFails, setPreflightFails] = useState<PreflightCheck[] | null>(
     null,
@@ -535,6 +544,8 @@ export function SessionView({ initial }: { initial: Session }) {
     0,
   );
   const formatLabel = FORMATS[config.format]?.label ?? config.format;
+  const srPlanLen = config.structuredRounds?.plan?.length ?? 0;
+  const flaggedTurns = turns.filter((t) => t.validationFlags?.length);
   const targetPct = Math.min(
     100,
     Math.round((totalWords / config.targetWordCount) * 100),
@@ -608,10 +619,18 @@ export function SessionView({ initial }: { initial: Session }) {
           </Button>
         )}
         <div className="ml-auto flex items-center gap-4 text-sm text-muted-foreground">
-          <span>{turns.length} turns</span>
-          <span>
-            {totalWords.toLocaleString()} / {config.targetWordCount.toLocaleString()} words ({targetPct}%)
-          </span>
+          {isSR ? (
+            <span title="Structured Rounds: turns delivered against the fixed plan">
+              {turns.length} / {srPlanLen} planned turns · {totalWords.toLocaleString()} words
+            </span>
+          ) : (
+            <>
+              <span>{turns.length} turns</span>
+              <span>
+                {totalWords.toLocaleString()} / {config.targetWordCount.toLocaleString()} words ({targetPct}%)
+              </span>
+            </>
+          )}
           <span>{formatUsd(totalCostUsd)}</span>
           {firstTurnAt && (
             <span title="Elapsed wall-clock (first turn → now)">
@@ -752,7 +771,10 @@ export function SessionView({ initial }: { initial: Session }) {
             busy={busyIndex === t.index}
             showTags={showTags}
             onRegenerate={() => handleRegenerate(t.index)}
-            onDelete={() => handleDelete(t.index)}
+            onDelete={isSR ? undefined : () => handleDelete(t.index)}
+            slotLabel={isSR && t.planSlot != null && config.structuredRounds?.plan?.[t.planSlot]
+              ? slotLabel(config, config.structuredRounds.plan[t.planSlot])
+              : undefined}
             onEdit={(text) => handleEdit(t.index, text)}
             onEditTags={(tagged) => handleEditTags(t.index, tagged)}
           />
@@ -808,6 +830,27 @@ export function SessionView({ initial }: { initial: Session }) {
               overacts; Robust ignores tags).
             </p>
           )}
+        </div>
+      )}
+
+      {/* Structured Rounds validation flags (B8) — turns kept but needing a look */}
+      {isSR && flaggedTurns.length > 0 && (
+        <div className="rounded-lg border border-amber-500/50 p-4 space-y-2" data-testid="validation-flags">
+          <h2 className="font-medium">Programme checks — {flaggedTurns.length} flagged {flaggedTurns.length === 1 ? 'turn' : 'turns'}</h2>
+          <p className="text-xs text-muted-foreground">
+            Each was retried once with a reminder and still broke the rule. Review, edit or regenerate before publishing.
+          </p>
+          <ul className="space-y-1 text-sm">
+            {flaggedTurns.map((t) => (
+              <li key={t.index}>
+                <span className="font-medium">#{t.index} {t.speakerDisplayName}</span>
+                {t.planSlot != null && config.structuredRounds?.plan?.[t.planSlot] && (
+                  <span className="text-muted-foreground"> · {slotLabel(config, config.structuredRounds.plan[t.planSlot])}</span>
+                )}
+                <span className="text-amber-700 dark:text-amber-500"> — {t.validationFlags!.map((f) => FLAG_LABEL[f] ?? f).join(', ')}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -1100,7 +1143,7 @@ export function SessionView({ initial }: { initial: Session }) {
             >
               Retry
             </Button>
-            {fatal?.agentId && fatal.agentId !== MODERATOR_ID && (
+            {fatal?.agentId && fatal.agentId !== MODERATOR_ID && !isSR && (
               <Button variant="outline" onClick={removeAndContinue}>
                 Remove {fatal.agentName}
               </Button>
@@ -1204,13 +1247,16 @@ function TurnBlock({
   onDelete,
   onEdit,
   onEditTags,
+  slotLabel: slotText,
 }: {
   turn: Turn;
   editable: boolean;
   busy: boolean;
   showTags: boolean;
   onRegenerate: () => void;
-  onDelete: () => void;
+  /** Absent when deleting isn't allowed (Structured Rounds). */
+  onDelete?: () => void;
+  slotLabel?: string;
   onEdit: (text: string) => void;
   onEditTags: (taggedText: string) => void;
 }) {
@@ -1230,7 +1276,7 @@ function TurnBlock({
           {turn.speakerDisplayName}
         </span>
         <span>“{displayText}”</span>
-        {editable && (
+        {editable && onDelete && (
           <Button
             variant="ghost"
             size="xs"
@@ -1281,6 +1327,14 @@ function TurnBlock({
             ⚠ truncated
           </Badge>
         )}
+        {slotText && (
+          <span className="text-[10px] text-muted-foreground">· {slotText}</span>
+        )}
+        {turn.validationFlags?.map((f) => (
+          <Badge key={f} variant="outline" className="text-[10px] border-amber-500/60 text-amber-700 dark:text-amber-500">
+            ⚠ {FLAG_LABEL[f] ?? f}
+          </Badge>
+        ))}
         {editable && !editing && (
           <span className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
             <Button
@@ -1315,15 +1369,17 @@ function TurnBlock({
                 Edit tags
               </Button>
             )}
-            <Button
-              variant="ghost"
-              size="xs"
-              disabled={busy}
-              onClick={onDelete}
-              className="text-muted-foreground hover:text-destructive"
-            >
-              Delete
-            </Button>
+            {onDelete && (
+              <Button
+                variant="ghost"
+                size="xs"
+                disabled={busy}
+                onClick={onDelete}
+                className="text-muted-foreground hover:text-destructive"
+              >
+                Delete
+              </Button>
+            )}
           </span>
         )}
       </div>

@@ -64,6 +64,7 @@ export async function POST(
       modelId: executed.modelId,
       searches: executed.searches,
       searchDegraded: executed.searchDegraded,
+      validationFlags: executed.validationFlags,
     });
     await markTurnsStaleAfter(id, idx);
     const totals = await recomputeAggregates(id);

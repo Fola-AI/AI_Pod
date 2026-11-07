@@ -1,6 +1,7 @@
 // Cost accounting from provider-returned token counts and registry pricing.
 
 import { getModel } from '@/config/models';
+import { buildPlan, estimatePlanWords } from '@/lib/structured-rounds';
 
 /** Cost in USD for a single call. Missing prices count as 0 (indicative only). */
 export function turnCostUsd(
@@ -38,16 +39,25 @@ import type { SessionConfig } from '@/lib/types';
  */
 export function estimateSessionCost(config: SessionConfig): number {
   const N = config.agentCount;
-  const avgWords =
+  let avgWords =
     config.agents.reduce((s, a) => s + a.maxWordsPerTurn, 0) / Math.max(1, N);
-  const avgOutTokens = avgWords * 1.35;
 
   // Estimated turn count: intro + enough rounds to hit target + closings.
   const roundTurns = Math.min(
     config.maxTurns,
     Math.ceil(config.targetWordCount / Math.max(40, avgWords)),
   );
-  const totalTurns = 1 /* mod opening */ + N /* openings */ + roundTurns + N /* closings */ + 2;
+  let totalTurns = 1 /* mod opening */ + N /* openings */ + roundTurns + N /* closings */ + 2;
+
+  // Structured Rounds: turn count and words come from the fixed plan, not from
+  // targetWordCount / maxTurns (which don't apply to this format).
+  const sr = config.format === 'structured-rounds' ? config.structuredRounds : undefined;
+  if (sr) {
+    const plan = sr.plan ?? buildPlan(sr);
+    totalTurns = plan.length;
+    avgWords = estimatePlanWords(plan, sr) / Math.max(1, plan.length);
+  }
+  const avgOutTokens = avgWords * 1.35;
 
   // System prompt + source material tokens repeated every turn.
   const sourceWords = (config.sourceMaterial ?? []).reduce(

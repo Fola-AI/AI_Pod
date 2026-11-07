@@ -38,6 +38,14 @@ import { MODERATOR_ID } from '@/lib/orchestrator';
 import { countWords, turnCostUsd } from '@/lib/cost';
 import { validateTurn } from '@/lib/turn-validation';
 import { turnMaxTokens } from '@/lib/turn-budget';
+import {
+  agentSlotInstruction,
+  moderatorIssues,
+  moderatorSlotInstruction,
+  presentationMissingCandidate,
+  rebuttalMissingRivals,
+  slotLabel,
+} from '@/lib/structured-rounds';
 
 // Resolve the session's grounding mode, tolerant of legacy configs: pre-5.5
 // sessions stored `webSearch.enabled` (a boolean) and used native search.
@@ -152,6 +160,8 @@ export async function executeTurn(
         : undefined
       : undefined;
 
+  // Structured Rounds: this turn fills a fixed plan slot (Batch B).
+  const slot = plan.slot;
   const systemPrompt = isModerator
     ? buildModeratorSystemPrompt(config)
     : buildAgentSystemPrompt(config, plan.agent!, {
@@ -159,6 +169,10 @@ export async function executeTurn(
         search:
           webSearchMaxUses !== undefined ? 'native' : useSharedSearch ? 'shared' : undefined,
         researchPack,
+        // The stated target is NOT scaled down per provider here: the programme
+        // promises equal airtime, and in B-2 Claude hit the reduced figure exactly
+        // (235 of 450 words). Other formats keep the calibration.
+        programme: slot ? { slot, targetWords: plan.maxWords } : undefined,
       });
 
   const buildTurn = (
@@ -238,7 +252,14 @@ export async function executeTurn(
   const baseUserMessage = buildTurnUserMessage(
     priorTurns,
     plan.turnType,
-    plan.instructionOpts,
+    slot
+      ? {
+          ...plan.instructionOpts,
+          structuredInstruction: isModerator
+            ? moderatorSlotInstruction(config, slot)
+            : agentSlotInstruction(config, slot),
+        }
+      : plan.instructionOpts,
     previousOpeners,
   );
   const baseMaxTokens = maxTokensFor(plan);
@@ -322,7 +343,7 @@ export async function executeTurn(
   // remains, it's unusable — halt (like empty) rather than persist a fragment.
   let wasTruncated = false;
   if (!v.valid && v.reason === 'truncated') {
-    const retryMessage = `${baseUserMessage}\n\nKeep this turn under ${calibratedWordBudget(plan.modelId, plan.maxWords)} words and finish your final sentence completely.`;
+    const retryMessage = `${baseUserMessage}\n\nKeep this turn under ${slot ? plan.maxWords : calibratedWordBudget(plan.modelId, plan.maxWords)} words and finish your final sentence completely.`;
     for (let i = 0; i < 2 && !v.valid && v.reason === 'truncated'; i++) {
       ({ result, searches, degraded } = await call(baseMaxTokens * 2, retryMessage));
       v = validateTurn(result.text, result.stopReason);
@@ -341,7 +362,70 @@ export async function executeTurn(
     }
   }
 
-  return buildTurn(result, wasTruncated, searches, degraded, emptyRetries);
+  // Structured Rounds (B8): format-specific checks on top of validateTurn. Each
+  // failure is retried once with a pointed reminder; a retry that is itself
+  // malformed is discarded (the first, valid draft is kept). If the rule is
+  // still broken the turn is kept and flagged — never silently dropped.
+  const validationFlags: string[] = [];
+  if (slot) {
+    type Check = { flag: string; issue: () => string | null };
+    const checks: Check[] = [];
+    if (slot.kind === 'PRESENTATION' && plan.agent) {
+      const a = plan.agent;
+      checks.push({
+        flag: 'presentation_missing_candidate',
+        issue: () =>
+          presentationMissingCandidate(result.text, a)
+            ? `This is your presentation for ${a.candidate}. Name ${a.candidate} explicitly, and speak only about ${a.candidate}'s record and plans.`
+            : null,
+      });
+    } else if (slot.kind === 'REBUTTAL' && plan.agent) {
+      const a = plan.agent;
+      checks.push({
+        flag: 'rebuttal_incomplete',
+        issue: () => {
+          const missing = rebuttalMissingRivals(result.text, a, config);
+          return missing.length
+            ? `Your rebuttal must name and challenge every rival. You did not address: ${missing
+                .map((m) => `${m.displayName}${m.candidate ? ` (${m.candidate})` : ''}`)
+                .join(', ')}. Name each of them and give at least one evidence-based challenge to each.`
+            : null;
+        },
+      });
+    } else if (isModerator) {
+      checks.push({
+        flag: 'moderator_rule',
+        issue: () => {
+          const issues = moderatorIssues(result.text, slot, config);
+          return issues.length
+            ? `Your last draft broke the programme rules: it ${issues.join('; and ')}. Rewrite it: ask no advocate a question, and use exactly the order you were given.`
+            : null;
+        },
+      });
+    }
+    for (const c of checks) {
+      const reminder = c.issue();
+      if (!reminder) continue;
+      const kept = { result, searches, degraded };
+      ({ result, searches, degraded } = await call(baseMaxTokens, `${baseUserMessage}\n\n${reminder}`));
+      if (!validateTurn(result.text, result.stopReason).valid) {
+        ({ result, searches, degraded } = kept); // malformed retry — keep the valid draft
+      }
+      if (c.issue()) validationFlags.push(c.flag);
+    }
+    // Run log: actual words against the drafting target for every turn.
+    console.log(
+      `[structured] slot ${plan.planSlot} ${slotLabel(config, slot)} — ${plan.speakerDisplayName}: ${countWords(
+        result.text,
+      )}/${plan.maxWords} words${validationFlags.length ? ` [${validationFlags.join(', ')}]` : ''}`,
+    );
+  }
+
+  return {
+    ...buildTurn(result, wasTruncated, searches, degraded, emptyRetries),
+    planSlot: plan.planSlot,
+    validationFlags: validationFlags.length ? validationFlags : undefined,
+  };
 }
 
 export function turnWordCount(t: { text: string }): number {

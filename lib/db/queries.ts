@@ -37,6 +37,8 @@ function rowToTurn(r: TurnRow): Turn {
     isStale: r.isStale,
     wasTruncated: r.wasTruncated,
     emptyRetries: r.emptyRetries ?? undefined,
+    planSlot: r.planSlot ?? undefined,
+    validationFlags: r.validationFlags ?? undefined,
     createdAt:
       r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt),
   };
@@ -194,6 +196,8 @@ export async function appendTurn(
       isStale: turn.isStale,
       wasTruncated: turn.wasTruncated,
       emptyRetries: turn.emptyRetries ?? null,
+      planSlot: turn.planSlot ?? null,
+      validationFlags: turn.validationFlags ?? null,
     })
     .returning();
 
@@ -305,12 +309,14 @@ export async function replaceTurn(
     modelId?: string;
     searches?: TurnSearch[];
     searchDegraded?: boolean;
+    validationFlags?: string[];
   },
 ): Promise<void> {
   await db
     .update(turns)
     .set({
       ...fields,
+      validationFlags: fields.validationFlags ?? null,
       searches: fields.searches ?? null,
       searchDegraded: fields.searchDegraded ?? false,
       wasTruncated: fields.wasTruncated ?? false,

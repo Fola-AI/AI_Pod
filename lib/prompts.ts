@@ -5,11 +5,13 @@
 
 import type {
   AgentConfig,
+  PlanSlot,
   SessionConfig,
   SourceDoc,
   Turn,
   TurnType,
 } from '@/lib/types';
+import { agentProgrammeBlock, moderatorProgrammeBlock } from '@/lib/structured-rounds';
 import { getPersona } from '@/lib/personas';
 import {
   getFormatFraming,
@@ -38,8 +40,11 @@ export function buildAgentSystemPrompt(
     search?: 'native' | 'shared';
     // Pre-computed topic brief injected as shared reference (B-5.5 fallback).
     researchPack?: string;
+    // Structured Rounds: the slot this turn fills and its (calibrated) word target.
+    programme?: { slot: PlanSlot; targetWords: number };
   } = {},
 ): string {
+  const structured = config.format === 'structured-rounds' && opts.programme;
   // Prefer the snapshot captured at session creation (B-6): the session replays
   // from exactly the persona text it was given, regardless of later edits. Fall
   // back to the code persona for sessions created before the snapshot existed.
@@ -49,12 +54,15 @@ export function buildAgentSystemPrompt(
 
   const stanceApplies =
     config.format === 'debate' ||
+    config.format === 'structured-rounds' ||
     (config.format === 'hot-seat' && opts.holdsSeat === true);
 
   const parts: string[] = [];
 
   parts.push(
-    `You are ${agent.displayName}, a participant in a recorded panel discussion.`,
+    structured
+      ? `You are ${agent.displayName}, an advocate in a recorded structured advocacy programme.`
+      : `You are ${agent.displayName}, a participant in a recorded panel discussion.`,
   );
   parts.push(
     `YOUR CHARACTER\n${persona?.systemPromptFragment ?? ''}`,
@@ -75,7 +83,8 @@ export function buildAgentSystemPrompt(
   }
 
   // Relationships (B-6, A-3): the dynamics this agent has with specific others.
-  const rels = (config.relationships ?? []).filter(
+  // Switched off for Structured Rounds (no relationship lines).
+  const rels = (structured ? [] : config.relationships ?? []).filter(
     (r) => r.agentA === agent.id || r.agentB === agent.id,
   );
   if (rels.length) {
@@ -96,6 +105,12 @@ export function buildAgentSystemPrompt(
     parts.push(
       `YOUR ASSIGNED POSITION\n${agent.stance}\nYou argue this position as well as it can be argued. You may concede narrow points, but you do not abandon the position.`,
     );
+  }
+
+  // Structured Rounds (B6): exactly where this turn sits in the programme and
+  // what it must do — after the stance block, every agent turn.
+  if (structured) {
+    parts.push(agentProgrammeBlock(config, agent, opts.programme!.slot, opts.programme!.targetWords));
   }
 
   if (source) {
@@ -129,9 +144,15 @@ export function buildAgentSystemPrompt(
   parts.push(
     `RULES OF THE ROOM
 
-Responding
+${
+      structured
+        ? `Responding
+- Follow YOUR TASK THIS TURN exactly. In a rebuttal, name each rival and
+  restate their specific claim before you challenge it.`
+        : `Responding
 - Respond to what has actually been said. Name the participant you are
-  answering and restate their specific claim before you respond to it.
+  answering and restate their specific claim before you respond to it.`
+    }
 - Do not summarise the discussion so far. The audience has heard it.
 ${
       isAgreementInverted(config.format)
@@ -143,11 +164,15 @@ ${
 - Vary how you open. Do not begin consecutive turns with the same
   construction. You have the transcript — check how you opened last
   time and do something different.
-- If something earlier in this conversation was funny, surprising, or
+${
+      structured
+        ? ''
+        : `- If something earlier in this conversation was funny, surprising, or
   badly phrased, you may refer back to it later. A callback to a line
   from earlier is one of the most enjoyable things in a conversation.
   Do not force one.
-
+`
+    }
 Speaking to the audience
 - You are speaking to an ordinary person with no background in this
   subject. A smart friend who has never thought about it before.
@@ -182,7 +207,11 @@ Evidence
 - Prefer one concrete, checkable fact over three abstract assertions.
 
 Length and delivery
-- Aim for about ${calibratedWordBudget(agent.modelId, agent.maxWordsPerTurn)} words. Shorter is usually better. Do not exceed this by much.
+- Aim for about ${
+      structured
+        ? opts.programme!.targetWords
+        : calibratedWordBudget(agent.modelId, agent.maxWordsPerTurn)
+    } words.${structured ? '' : ' Shorter is usually better.'} Do not exceed this by much.
 - Never announce what your point is. Make it. Do not say "here is my
   point", "the takeaway is", "what a listener should remember is" — just
   say the thing.
@@ -219,12 +248,18 @@ export function buildModeratorSystemPrompt(config: SessionConfig): string {
   );
   parts.push(`THE TOPIC\n${config.topic}`);
   parts.push(`THE FORMAT\n${framing}`);
-  parts.push(`THE PARTICIPANTS\n${participants}`);
+  if (config.format !== 'structured-rounds') parts.push(`THE PARTICIPANTS\n${participants}`);
 
   if (source) {
     parts.push(
       `SOURCE MATERIAL\nAll participants have been given the following. Challenge any claim that contradicts it.\n\n${source}`,
     );
+  }
+
+  // Structured Rounds (B7): slot-specific presenter, not a free-form steerer.
+  if (config.format === 'structured-rounds' && config.structuredRounds) {
+    parts.push(moderatorProgrammeBlock(config));
+    return parts.join('\n\n');
   }
 
   parts.push(
@@ -300,12 +335,15 @@ export interface TurnInstructionOpts {
   banter?: boolean;
   /** An off-rotation reaction interjection (A-1). */
   interjection?: boolean;
+  /** Structured Rounds: the exact slot instruction (overrides everything else). */
+  structuredInstruction?: string;
 }
 
 export function turnInstruction(
   turnType: TurnType,
   opts: TurnInstructionOpts = {},
 ): string {
+  if (opts.structuredInstruction) return opts.structuredInstruction;
   if (opts.interjection) return INTERJECTION_INSTRUCTION;
   if (opts.moderatorBanter) {
     return 'Open the show with a little light chat before the topic. Greet the participants by name and ask one easy, low-stakes question — unrelated or only loosely related to the topic. Keep it dry and offhand, the way a host who knows these people already opens. Do not introduce the topic yet.';

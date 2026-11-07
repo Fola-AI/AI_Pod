@@ -97,12 +97,28 @@ export const FORMATS: Record<SessionFormat, FormatMeta> = {
       'This is a story swap. Relate the topic to a specific, concrete situation — a real scene with detail, not an argument. Listen to each other\'s stories and build on them; it is fine to be moved or to say one reminded you of your own.',
     agreementInverted: true,
   },
+  // Batch B: the engine, not the models, controls who speaks, when, and on what.
+  'structured-rounds': {
+    id: 'structured-rounds',
+    label: 'Structured Rounds',
+    stancesAssigned: true,
+    bestFor: 'Assigned advocacy with even airtime — one advocate per candidate, city or option.',
+    shape:
+      'Each round has a theme. Every advocate presents in depth, then every advocate rebuts all rivals. Fixed order, no interruptions.',
+    formatFraming:
+      "This is a structured advocacy programme in rounds. Each round has one theme. In the presentation phase each advocate presents their own candidate's record and plans on that theme in depth. In the rebuttal phase each advocate challenges every rival's presentation from this round and compares it with their own candidate. Speaking order is fixed by the programme.",
+  },
 };
 
 export const FORMAT_LIST: FormatMeta[] = Object.values(FORMATS);
 
 export function isStanceBearing(format: SessionFormat): boolean {
-  return format === 'debate' || format === 'hot-seat';
+  return format === 'debate' || format === 'hot-seat' || format === 'structured-rounds';
+}
+
+/** Formats where every agent must have a stance before the session can run. */
+export function stancesMandatory(format: SessionFormat): boolean {
+  return format === 'debate' || format === 'structured-rounds';
 }
 
 export function getFormatFraming(format: SessionFormat): string {

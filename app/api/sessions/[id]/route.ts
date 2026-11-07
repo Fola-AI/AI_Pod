@@ -57,6 +57,13 @@ export async function PATCH(
       agent.modelId = parsed.data.modelId;
     }
   } else {
+    if (config.format === 'structured-rounds') {
+      // The turn plan is fixed up front; removing an advocate would break equal airtime.
+      return NextResponse.json(
+        { error: 'Advocates cannot be removed in Structured Rounds. Substitute the model instead.' },
+        { status: 400 },
+      );
+    }
     if (parsed.data.agentId === 'moderator') {
       return NextResponse.json(
         { error: 'The moderator cannot be removed.' },

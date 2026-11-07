@@ -22,7 +22,10 @@ export type SessionFormat =
   // Non-adversarial formats (A-6)
   | 'shared-curiosity'
   | 'quickfire'
-  | 'story-swap';
+  | 'story-swap'
+  // Engine-controlled advocacy in themed rounds (Batch B): the turn plan is
+  // computed up front and executed slot by slot.
+  | 'structured-rounds';
 
 export type InterjectionRate = 'off' | 'low' | 'medium' | 'high';
 
@@ -192,6 +195,50 @@ export interface AgentConfig {
   // Force a search on this agent's first substantive turn (shared mode, B-5.5).
   // Undefined → default by model tool-propensity (on for low-propensity models).
   forceFirstSearch?: boolean;
+  // Structured Rounds only (Batch B): the candidate this advocate argues for, and
+  // the names that count as referring to them (validation of presentations and
+  // rebuttals). Aliases default to the advocate's name + the candidate.
+  candidate?: string;
+  aliases?: string[];
+}
+
+// --- Structured Rounds (Batch B) ---
+export interface RoundConfig {
+  id: string;
+  title: string; // e.g. "Economy and cost of living"
+  brief?: string; // optional 1–3 sentence scope note, shown to agents and moderator
+}
+
+export type PlanSlotKind =
+  | 'OPENING'
+  | 'ROUND_INTRO'
+  | 'SPEAKER_INTRO'
+  | 'PRESENTATION'
+  | 'PHASE_SWITCH'
+  | 'REBUTTAL'
+  | 'CLOSINGS_INTRO'
+  | 'CLOSING'
+  | 'CLOSE';
+
+/** One slot of the fixed turn plan. The plan is the single source of truth. */
+export interface PlanSlot {
+  kind: PlanSlotKind;
+  speakerId: string; // agent id, or 'moderator'
+  round?: number; // 0-based; set for round slots
+  phase?: 'presentation' | 'rebuttal' | 'closing';
+  order?: string[]; // agent ids in this phase's speaking order
+  introFor?: string; // SPEAKER_INTRO: the agent being introduced
+}
+
+export interface StructuredRoundsConfig {
+  rounds: RoundConfig[]; // min 1, max 8
+  presentationWords: number; // drafting target, default 450
+  rebuttalWords: number; // drafting target, default 300
+  speakerIntros: boolean; // default true
+  advocateClosings: boolean; // default false
+  closingWords: number; // default 150, used only if advocateClosings
+  baseOrder: string[]; // agent ids
+  plan?: PlanSlot[]; // computed when the session is created; then fixed
 }
 
 export type InterjectionFrequency = 'low' | 'medium' | 'high';
@@ -228,6 +275,7 @@ export interface SessionConfig {
   webSearch?: WebSearchConfig; // Web search grounding (P1-2 / B-5.5)
   researchPack?: string; // Pre-computed topic brief injected into agent prompts (B-5.5)
   relationships?: Relationship[]; // Agent-pair dynamics (B-6, A-3); default none
+  structuredRounds?: StructuredRoundsConfig; // format === 'structured-rounds' only
   createdAt: string;
 }
 
@@ -244,7 +292,15 @@ export type TurnType =
   | 'moderator' // a mid-discussion moderator interjection
   | 'call-closings' // moderator calls for closing statements
   | 'closing' // an agent's closing statement
-  | 'moderator-closing'; // moderator closes, declines a winner
+  | 'moderator-closing' // moderator closes, declines a winner
+  // Structured Rounds slots (Batch B). OPENING / CLOSINGS_INTRO / CLOSING /
+  // CLOSE reuse 'moderator-opening' / 'call-closings' / 'closing' /
+  // 'moderator-closing'.
+  | 'round-intro' // moderator: round number, theme, presentation order
+  | 'speaker-intro' // moderator: one line introducing the next speaker
+  | 'phase-switch' // moderator: announces the rebuttal phase and its order
+  | 'presentation' // advocate: own candidate's record and plans on the theme
+  | 'rebuttal'; // advocate: challenges every rival's presentation this round
 
 // A full turn is a substantive contribution; an interjection is a 3–15 word
 // off-rotation reaction (A-1).
@@ -273,6 +329,12 @@ export interface Turn {
   // blanked and was retried; a model doing this on >half its turns is a roster
   // problem, flagged on the transcript screen (bug 2). Undefined on older rows.
   emptyRetries?: number;
+  // Structured Rounds: which plan slot this turn filled (written with the turn,
+  // so resume/retry never duplicate or skip a slot).
+  planSlot?: number;
+  // Turn-level validation flags, e.g. 'rebuttal_incomplete' (surfaced in the
+  // claims checklist).
+  validationFlags?: string[];
   createdAt: string;
 }
 

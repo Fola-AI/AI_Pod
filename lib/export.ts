@@ -36,6 +36,14 @@ export function toMarkdown(session: Session): string {
     '',
     `**Topic:** ${config.topic}`,
     `**Date:** ${date}  ·  **Format:** ${formatLabel}  ·  **Participants:** ${config.agentCount}`,
+    // Structured Rounds (B9): list the round titles in the header.
+    ...(config.format === 'structured-rounds' && config.structuredRounds
+      ? [
+          '',
+          '**Rounds:**',
+          ...config.structuredRounds.rounds.map((r, i) => `${i + 1}. ${r.title}`),
+        ]
+      : []),
     '',
     '## Roster',
     ...rosterLines(session),
@@ -44,8 +52,31 @@ export function toMarkdown(session: Session): string {
     '',
   ].join('\n');
 
+  // Structured Rounds (B9): a plain marker line before each round and each phase.
+  // Markdown only — the voice-pass and ElevenLabs exports stay marker-free.
+  const plan = config.format === 'structured-rounds' ? config.structuredRounds?.plan : undefined;
+  let lastMarker = '';
   const body = session.turns
-    .map((t) => `**${t.speakerDisplayName.toUpperCase()}**\n\n${t.text}`)
+    .map((t) => {
+      const line = `**${t.speakerDisplayName.toUpperCase()}**\n\n${t.text}`;
+      const slot = plan && typeof t.planSlot === 'number' ? plan[t.planSlot] : undefined;
+      if (!slot?.phase) return line;
+      const markers: string[] = [];
+      const roundKey = slot.round !== undefined ? `round-${slot.round}` : 'closings';
+      const phaseKey = `${roundKey}:${slot.phase}`;
+      if (!lastMarker.startsWith(roundKey + ':')) {
+        markers.push(
+          slot.round !== undefined
+            ? `--- Round ${slot.round + 1}: ${config.structuredRounds!.rounds[slot.round].title} ---`
+            : '--- Closing statements ---',
+        );
+      }
+      if (lastMarker !== phaseKey && slot.round !== undefined) {
+        markers.push(`--- ${slot.phase === 'presentation' ? 'Presentations' : 'Rebuttals'} ---`);
+      }
+      lastMarker = phaseKey;
+      return markers.length ? `${markers.join('\n\n')}\n\n${line}` : line;
+    })
     .join('\n\n');
 
   const footer = ['', '', '---', '', `_${DISCLOSURE_FOOTER}_`].join('\n');
@@ -106,7 +137,10 @@ export function toSpeakerManifest(session: Session): string {
       const base = `${a.displayName.padEnd(10)}${(persona?.name ?? '').padEnd(20)}${(
         model?.displayName ?? a.modelId
       ).padEnd(24)}`;
-      return a.referenceImage ? `${base}${a.referenceImage}` : base.trimEnd();
+      // Structured Rounds (B9): the stance sits next to persona and model.
+      const withStance =
+        config.format === 'structured-rounds' && a.stance ? `${base}${a.stance.padEnd(40)}` : base;
+      return a.referenceImage ? `${withStance}${a.referenceImage}` : withStance.trimEnd();
     }),
     `${(config.moderator.displayName || 'Moderator').padEnd(10)}${'—'.padEnd(20)}${
       getModel(config.moderator.modelId)?.displayName ??

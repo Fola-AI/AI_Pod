@@ -74,6 +74,11 @@ export const turns = pgTable(
     wasTruncated: boolean('was_truncated').notNull().default(false),
     // Empty returns that preceded this turn (bug 2). Nullable — older rows have none.
     emptyRetries: integer('empty_retries'),
+    // Structured Rounds (Batch B): the plan slot this turn filled — written with
+    // the turn so resume/retry can never duplicate or skip a slot. Nullable.
+    planSlot: integer('plan_slot'),
+    // Turn-level validation flags, e.g. ['rebuttal_incomplete']. Nullable.
+    validationFlags: jsonb('validation_flags').$type<string[]>(),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

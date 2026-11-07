@@ -36,7 +36,15 @@ import {
   routeLabel,
 } from '@/config/models';
 import type { Character, Persona } from '@/lib/types';
-import { FORMAT_LIST, FORMATS, isStanceBearing } from '@/lib/formats';
+import { FORMAT_LIST, FORMATS, isStanceBearing, stancesMandatory } from '@/lib/formats';
+import {
+  buildPlan,
+  candidateAliases,
+  estimatePlanWords,
+  SR_DEFAULTS,
+  SR_MAX_ROUNDS,
+  SR_MIN_ROUNDS,
+} from '@/lib/structured-rounds';
 import {
   buildTierMatchRoster,
   mixedTierWarning,
@@ -44,9 +52,12 @@ import {
 } from '@/lib/tiering';
 import type {
   ModelTier,
+  PlanSlot,
   ProviderId,
+  RoundConfig,
   SessionFormat,
   SessionConfig,
+  StructuredRoundsConfig,
 } from '@/lib/types';
 
 // How an agent's model will be grounded under the chosen session mode. `ok`
@@ -107,6 +118,15 @@ interface AgentDraft {
   voiceId: string;
   webSearchEnabled: boolean;
   characterId?: string; // optional show-bible character (B-6)
+  // Structured Rounds only: candidate + comma-separated name aliases.
+  candidate?: string;
+  aliases?: string;
+}
+
+type SRDraft = Omit<StructuredRoundsConfig, 'plan'>;
+const newRound = (): RoundConfig => ({ id: crypto.randomUUID(), title: '', brief: '' });
+function defaultSR(): SRDraft {
+  return { rounds: [newRound(), newRound(), newRound()], ...SR_DEFAULTS, baseOrder: [] };
 }
 
 const NAME_POOL = ['Lara', 'Tony', 'Kimi', 'Ada', 'Zoe', 'Ravi', 'Nia', 'Sam', 'Ben'];
@@ -191,6 +211,73 @@ export default function NewSessionPage() {
   const [relationships, setRelationships] = useState<
     { agentA: string; agentB: string; dynamic: string }[]
   >([]);
+  // Structured Rounds (Batch B): rounds, order and settings; the turn plan is
+  // derived live for the preview and computed for real at Create session.
+  const [sr, setSr] = useState<SRDraft>(defaultSR);
+  const isSR = format === 'structured-rounds';
+  // Advocate order: the drag-list order, kept in step with the roster (removed
+  // agents drop out, new agents join at the end).
+  const srOrder = useMemo(() => {
+    const ids = agents.map((a) => a.id);
+    const kept = sr.baseOrder.filter((id) => ids.includes(id));
+    return [...kept, ...ids.filter((id) => !kept.includes(id))];
+  }, [agents, sr.baseOrder]);
+  const srPlan = useMemo(
+    () => (isSR ? buildPlan({ ...sr, baseOrder: srOrder }) : []),
+    [isSR, sr, srOrder],
+  );
+  const srWords = useMemo(() => (isSR ? estimatePlanWords(srPlan, sr) : 0), [isSR, srPlan, sr]);
+  const [dragId, setDragId] = useState<string | null>(null);
+  function updateRound(id: string, patch: Partial<RoundConfig>) {
+    setSr((p) => ({ ...p, rounds: p.rounds.map((r) => (r.id === id ? { ...r, ...patch } : r)) }));
+  }
+  function moveRound(i: number, d: number) {
+    setSr((p) => {
+      const rs = [...p.rounds];
+      const j = i + d;
+      if (j < 0 || j >= rs.length) return p;
+      [rs[i], rs[j]] = [rs[j], rs[i]];
+      return { ...p, rounds: rs };
+    });
+  }
+  function removeRound(id: string) {
+    setSr((p) =>
+      p.rounds.length <= SR_MIN_ROUNDS ? p : { ...p, rounds: p.rounds.filter((r) => r.id !== id) },
+    );
+  }
+  /** Move an advocate to position `to` in the order (drag or ↑/↓). */
+  function moveOrder(id: string, to: number) {
+    const o = srOrder.filter((x) => x !== id);
+    o.splice(Math.max(0, Math.min(to, o.length)), 0, id);
+    setSr((p) => ({ ...p, baseOrder: o }));
+  }
+  const SLOT_NAME: Record<PlanSlot['kind'], string> = {
+    OPENING: 'Opening',
+    ROUND_INTRO: 'Round intro',
+    SPEAKER_INTRO: 'Speaker intro',
+    PRESENTATION: 'Presentation',
+    PHASE_SWITCH: 'Rebuttal phase',
+    REBUTTAL: 'Rebuttal',
+    CLOSINGS_INTRO: 'Closings intro',
+    CLOSING: 'Closing',
+    CLOSE: 'Close',
+  };
+  function slotSpeaker(slot: PlanSlot): string {
+    return slot.speakerId === 'moderator'
+      ? modName || 'Moderator'
+      : (agents.find((a) => a.id === slot.speakerId)?.displayName ?? '?');
+  }
+  function slotDescription(slot: PlanSlot): string {
+    const round =
+      slot.round !== undefined
+        ? `Round ${slot.round + 1}${sr.rounds[slot.round]?.title.trim() ? ` (${sr.rounds[slot.round].title.trim()})` : ''} · `
+        : '';
+    const intro =
+      slot.kind === 'SPEAKER_INTRO'
+        ? ` → ${agents.find((a) => a.id === slot.introFor)?.displayName ?? ''}`
+        : '';
+    return `${round}${SLOT_NAME[slot.kind]}${intro}`;
+  }
 
   useEffect(() => {
     fetchProviders()
@@ -243,6 +330,7 @@ export default function NewSessionPage() {
       presetId,
       presetModified,
       tierMatchInfo,
+      structuredRounds: sr,
     };
   }
 
@@ -272,6 +360,7 @@ export default function NewSessionPage() {
     setPresetId(st.presetId ?? null);
     setPresetModified(st.presetModified ?? false);
     setTierMatchInfo(st.tierMatchInfo ?? null);
+    setSr(st.structuredRounds ?? defaultSR());
   }
 
   // The builder's defaults — what "New session" opens with.
@@ -450,6 +539,7 @@ export default function NewSessionPage() {
       },
       targetWordCount,
       maxTurns,
+      structuredRounds: isSR ? { ...sr, baseOrder: srOrder } : undefined,
       createdAt: '',
     };
     return estimateSessionCost(cfg);
@@ -465,6 +555,9 @@ export default function NewSessionPage() {
     title,
     topic,
     modName,
+    isSR,
+    sr,
+    srOrder,
   ]);
 
   function setAgentCount(n: number) {
@@ -617,9 +710,19 @@ export default function NewSessionPage() {
   async function submit() {
     if (!title.trim()) return toast.error('Add a title.');
     if (!topic.trim()) return toast.error('Add a topic.');
-    if (stanceRequired && format === 'debate') {
+    if (stancesMandatory(format)) {
       const missing = agents.filter((a) => !a.stance.trim());
-      if (missing.length) return toast.error('Each debater needs a stance.');
+      if (missing.length)
+        return toast.error(
+          isSR ? `Every advocate needs a stance (missing: ${missing.map((a) => a.displayName).join(', ')}).` : 'Each debater needs a stance.',
+        );
+    }
+    if (isSR) {
+      const noCandidate = agents.filter((a) => !a.candidate?.trim());
+      if (noCandidate.length)
+        return toast.error(`Every advocate needs a candidate (missing: ${noCandidate.map((a) => a.displayName).join(', ')}).`);
+      const untitled = sr.rounds.findIndex((r) => !r.title.trim());
+      if (untitled >= 0) return toast.error(`Round ${untitled + 1} needs a theme.`);
     }
     setSaving(true);
     try {
@@ -650,10 +753,34 @@ export default function NewSessionPage() {
           voiceId: a.voiceId.trim() || undefined,
           webSearchEnabled: a.webSearchEnabled,
           characterId: a.characterId || undefined,
+          ...(isSR
+            ? {
+                candidate: a.candidate?.trim() || undefined,
+                aliases: a.aliases?.trim()
+                  ? a.aliases.split(',').map((x) => x.trim()).filter(Boolean)
+                  : undefined,
+              }
+            : {}),
         })),
-        relationships: relationships.filter((r) => r.agentA && r.agentB && r.dynamic.trim())
-          .length
-          ? relationships.filter((r) => r.agentA && r.agentB && r.dynamic.trim())
+        // Relationship lines are switched off for Structured Rounds (B5).
+        relationships:
+          !isSR && relationships.filter((r) => r.agentA && r.agentB && r.dynamic.trim()).length
+            ? relationships.filter((r) => r.agentA && r.agentB && r.dynamic.trim())
+            : undefined,
+        structuredRounds: isSR
+          ? {
+              rounds: sr.rounds.map((r) => ({
+                id: r.id,
+                title: r.title.trim(),
+                brief: r.brief?.trim() || undefined,
+              })),
+              presentationWords: sr.presentationWords,
+              rebuttalWords: sr.rebuttalWords,
+              speakerIntros: sr.speakerIntros,
+              advocateClosings: sr.advocateClosings,
+              closingWords: sr.closingWords,
+              baseOrder: srOrder,
+            }
           : undefined,
         moderator: {
           displayName: modName.trim() || 'Moderator',
@@ -1085,7 +1212,7 @@ export default function NewSessionPage() {
                 <div className="space-y-1.5">
                   <Label className="text-xs">
                     Stance{' '}
-                    {format === 'debate' && (
+                    {stancesMandatory(format) && (
                       <span className="text-destructive">*</span>
                     )}
                   </Label>
@@ -1096,6 +1223,33 @@ export default function NewSessionPage() {
                       updateAgent(a.id, { stance: e.target.value })
                     }
                   />
+                </div>
+              )}
+              {isSR && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">
+                      Candidate <span className="text-destructive">*</span>
+                    </Label>
+                    <Input
+                      placeholder='Who they argue for, e.g. "London" or "Tinubu"'
+                      value={a.candidate ?? ''}
+                      onChange={(e) => updateAgent(a.id, { candidate: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Aliases (comma-separated, optional)</Label>
+                    <Input
+                      placeholder={[a.displayName, ...candidateAliases({ ...a, candidate: a.candidate } as never)]
+                        .filter(Boolean)
+                        .join(', ')}
+                      value={a.aliases ?? ''}
+                      onChange={(e) => updateAgent(a.id, { aliases: e.target.value })}
+                    />
+                    <p className="text-[10px] text-muted-foreground">
+                      Names that count as referring to this advocate in rebuttal checks. Default shown.
+                    </p>
+                  </div>
                 </div>
               )}
 
@@ -1198,6 +1352,7 @@ export default function NewSessionPage() {
             );
           })}
 
+          {!isSR && (
           <div className="space-y-2 rounded-lg border p-4">
             <div className="flex items-center justify-between">
               <Label className="text-xs">Relationships (optional)</Label>
@@ -1277,8 +1432,155 @@ export default function NewSessionPage() {
               <option value="Recently changed their mind because of something the other said" />
             </datalist>
           </div>
+          )}
         </CardContent>
       </Card>
+
+      {/* Structured Rounds (Batch B) — only for this format */}
+      {isSR && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Structured Rounds</CardTitle>
+            <CardDescription>
+              The programme fixes who speaks, when, and on what. Each round has a theme: every
+              advocate presents in depth, then every advocate rebuts all rivals.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">
+                  Rounds ({sr.rounds.length}, max {SR_MAX_ROUNDS})
+                </Label>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={sr.rounds.length >= SR_MAX_ROUNDS}
+                  onClick={() => setSr((p) => ({ ...p, rounds: [...p.rounds, newRound()] }))}
+                >
+                  Add round
+                </Button>
+              </div>
+              {sr.rounds.map((r, i) => (
+                <div key={r.id} className="rounded-md border p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground w-16 shrink-0">Round {i + 1}</span>
+                    <Input
+                      aria-label={`Round ${i + 1} theme`}
+                      placeholder='Theme, e.g. "Economy and cost of living"'
+                      value={r.title}
+                      onChange={(e) => updateRound(r.id, { title: e.target.value })}
+                    />
+                    <Button type="button" size="sm" variant="ghost" aria-label="Move round up" disabled={i === 0} onClick={() => moveRound(i, -1)}>
+                      ↑
+                    </Button>
+                    <Button type="button" size="sm" variant="ghost" aria-label="Move round down" disabled={i === sr.rounds.length - 1} onClick={() => moveRound(i, 1)}>
+                      ↓
+                    </Button>
+                    <Button type="button" size="sm" variant="ghost" aria-label="Remove round" disabled={sr.rounds.length <= SR_MIN_ROUNDS} onClick={() => removeRound(r.id)}>
+                      ✕
+                    </Button>
+                  </div>
+                  <Textarea
+                    rows={2}
+                    aria-label={`Round ${i + 1} brief`}
+                    placeholder="Optional scope note (1–3 sentences), shown to advocates and the moderator"
+                    value={r.brief ?? ''}
+                    onChange={(e) => updateRound(r.id, { brief: e.target.value })}
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs">
+                Advocate order — drag to reorder. This is round 1&rsquo;s presentation order; it
+                rotates by one each round, and rebuttals run in reverse.
+              </Label>
+              <ol className="space-y-1">
+                {srOrder.map((id, i) => {
+                  const a = agents.find((x) => x.id === id)!;
+                  return (
+                    <li
+                      key={id}
+                      draggable
+                      onDragStart={(e) => {
+                        setDragId(id);
+                        e.dataTransfer.effectAllowed = 'move';
+                      }}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        if (dragId) moveOrder(dragId, i);
+                        setDragId(null);
+                      }}
+                      className="flex items-center gap-2 rounded-md border bg-background px-3 py-1.5 text-sm cursor-grab"
+                    >
+                      <span className="text-muted-foreground select-none">⠿</span>
+                      <span className="w-5 text-muted-foreground">{i + 1}.</span>
+                      <span className="flex-1">
+                        {a.displayName}
+                        {a.candidate?.trim() ? ` — ${a.candidate.trim()}` : ''}
+                      </span>
+                      <Button type="button" size="sm" variant="ghost" aria-label={`Move ${a.displayName} up`} disabled={i === 0} onClick={() => moveOrder(id, i - 1)}>
+                        ↑
+                      </Button>
+                      <Button type="button" size="sm" variant="ghost" aria-label={`Move ${a.displayName} down`} disabled={i === srOrder.length - 1} onClick={() => moveOrder(id, i + 1)}>
+                        ↓
+                      </Button>
+                    </li>
+                  );
+                })}
+              </ol>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Presentation target (words)</Label>
+                <Input type="number" min={50} max={2000} step={25} value={sr.presentationWords}
+                  onChange={(e) => setSr((p) => ({ ...p, presentationWords: Number(e.target.value) }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Rebuttal target (words)</Label>
+                <Input type="number" min={50} max={2000} step={25} value={sr.rebuttalWords}
+                  onChange={(e) => setSr((p) => ({ ...p, rebuttalWords: Number(e.target.value) }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Closing target (words)</Label>
+                <Input type="number" min={30} max={1000} step={25} value={sr.closingWords} disabled={!sr.advocateClosings}
+                  onChange={(e) => setSr((p) => ({ ...p, closingWords: Number(e.target.value) }))} />
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={sr.speakerIntros}
+                  onChange={(e) => setSr((p) => ({ ...p, speakerIntros: e.target.checked }))} />
+                Moderator introduces each speaker
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={sr.advocateClosings}
+                  onChange={(e) => setSr((p) => ({ ...p, advocateClosings: e.target.checked }))} />
+                Advocate closing statements
+              </label>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-sm font-medium" data-testid="plan-summary">
+                Turn plan: {srPlan.length} turns · ~{srWords.toLocaleString()} words · ~
+                {Math.round(srWords / 150)} min at 150 wpm
+              </p>
+              <ol className="max-h-72 overflow-y-auto rounded-md border divide-y text-xs" data-testid="turn-plan">
+                {srPlan.map((slot, i) => (
+                  <li key={i} className="flex gap-3 px-3 py-1.5">
+                    <span className="w-6 text-right text-muted-foreground tabular-nums">{i + 1}</span>
+                    <span className="w-24 shrink-0 font-medium">{slotSpeaker(slot)}</span>
+                    <span className="text-muted-foreground">{slotDescription(slot)}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Source material */}
       <Card>
@@ -1439,6 +1741,13 @@ export default function NewSessionPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {isSR && (
+            <p className="sm:col-span-2 text-xs text-muted-foreground">
+              Structured Rounds runs with no banter, no interjections and no callbacks — the
+              programme fixes the speaking order. Web search still applies.
+            </p>
+          )}
+          {!isSR && (<>
           <div className="space-y-1.5">
             <Label className="text-xs">Interjections (short reactions)</Label>
             <Select
@@ -1479,6 +1788,7 @@ export default function NewSessionPage() {
               Light chat before the topic
             </label>
           </div>
+          </>)}
           <div className="space-y-1.5">
             <Label className="text-xs">Grounding mode</Label>
             <select
@@ -1532,6 +1842,13 @@ export default function NewSessionPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {isSR ? (
+            <p className="sm:col-span-2 text-sm text-muted-foreground">
+              Length comes from the turn plan: <span className="text-foreground">{srPlan.length} turns</span>, ~
+              {srWords.toLocaleString()} words (~{Math.round(srWords / 150)} min). Target word count and max
+              turns don&rsquo;t apply to this format.
+            </p>
+          ) : (<>
           <div className="space-y-1.5">
             <Label className="text-xs">
               Target word count (~{Math.round(targetWordCount / 150)} min)
@@ -1554,6 +1871,7 @@ export default function NewSessionPage() {
               onChange={(e) => setMaxTurns(Number(e.target.value))}
             />
           </div>
+          </>)}
           <div className="space-y-1.5">
             <Label className="text-xs">Budget cap (USD, optional)</Label>
             <Input

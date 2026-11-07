@@ -58,6 +58,14 @@ export async function DELETE(
   const { id, index } = await ctx.params;
   const idx = Number(index);
   try {
+    const existing = await getSession(id);
+    if (existing?.config.format === 'structured-rounds') {
+      // Each turn fills one plan slot; deleting one would leave a hole in the programme.
+      return NextResponse.json(
+        { error: 'Turns cannot be deleted in Structured Rounds. Regenerate or edit the turn instead.' },
+        { status: 400 },
+      );
+    }
     await deleteTurnAndRenumber(id, idx);
     const totals = await recomputeAggregates(id);
     const session = await getSession(id);

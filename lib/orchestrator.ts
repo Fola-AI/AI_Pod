@@ -5,11 +5,18 @@
 import type {
   AgentConfig,
   InterjectionRate,
+  PlanSlot,
   SessionConfig,
   Turn,
   TurnClass,
   TurnType,
 } from '@/lib/types';
+import {
+  buildPlan,
+  nextSlotIndex,
+  slotTargetWords,
+  SLOT_TURN_TYPE,
+} from '@/lib/structured-rounds';
 import { countWords } from '@/lib/cost';
 import type { TurnInstructionOpts } from '@/lib/prompts';
 
@@ -132,6 +139,9 @@ export interface TurnPlan {
   instructionOpts: TurnInstructionOpts;
   /** hot-seat: whether this agent currently holds the seat. */
   holdsSeat?: boolean;
+  /** Structured Rounds: the plan slot this turn fills, and the slot itself. */
+  planSlot?: number;
+  slot?: PlanSlot;
 }
 
 function accumulatedWords(turns: Turn[]): number {
@@ -415,6 +425,12 @@ export function planNextTurn(
   turns: Turn[],
   opts: { stopRequested?: boolean; suppressInterjection?: boolean } = {},
 ): TurnPlan | null {
+  // Structured Rounds: the persisted plan is the single source of truth. No
+  // banter, interjections, moderator-directed routing or round-robin — every
+  // other format continues below, unchanged.
+  if (config.format === 'structured-rounds') {
+    return planStructuredTurn(config, turns, opts.stopRequested ?? false);
+  }
   const N = config.agentCount;
   const bantering = config.openingBanter !== false; // default on
 
@@ -507,6 +523,12 @@ export function planFromStoredTurn(
   config: SessionConfig,
   turn: Turn,
 ): TurnPlan {
+  // Structured Rounds: regenerate exactly the slot this turn filled.
+  if (config.format === 'structured-rounds' && typeof turn.planSlot === 'number') {
+    const prior = { planSlot: turn.planSlot - 1 } as Turn;
+    const plan = planStructuredTurn(config, turn.planSlot > 0 ? [prior] : [], false);
+    if (plan && plan.planSlot === turn.planSlot) return plan;
+  }
   if (turn.speakerId === MODERATOR_ID) {
     const instructionOpts: TurnInstructionOpts =
       turn.turnType === 'moderator-banter'
@@ -553,5 +575,60 @@ export function planFromStoredTurn(
       config.format === 'hot-seat'
         ? agent.id === config.agents[0].id
         : undefined,
+  };
+}
+
+/**
+ * Structured Rounds: plan the next slot. The plan was computed when the session
+ * was created; the next slot is one after the highest slot already delivered
+ * (each turn records its slot), so retries refill the same slot and a reload
+ * resumes exactly. Stop & close / budget cap skip to the closings section.
+ */
+function planStructuredTurn(
+  config: SessionConfig,
+  turns: Turn[],
+  stopRequested: boolean,
+): TurnPlan | null {
+  const sr = config.structuredRounds;
+  if (!sr) throw new Error('Structured Rounds session has no rounds configuration.');
+  const plan = sr.plan ?? buildPlan(sr);
+  const i = nextSlotIndex(plan, turns, stopRequested);
+  if (i === null) return null;
+  const slot = plan[i];
+  const turnType = SLOT_TURN_TYPE[slot.kind];
+  const maxWords = slotTargetWords(slot, sr);
+  if (slot.speakerId === MODERATOR_ID) {
+    return {
+      speakerId: MODERATOR_ID,
+      speakerDisplayName: config.moderator.displayName || 'Moderator',
+      turnType,
+      turnClass: 'full',
+      modelId: config.moderator.modelId,
+      temperature: config.moderator.temperature,
+      maxWords,
+      instructionOpts: {},
+      planSlot: i,
+      slot,
+    };
+  }
+  const agent = config.agents.find((a) => a.id === slot.speakerId);
+  if (!agent) {
+    // Removing a participant is disabled for this format; a missing agent means
+    // the plan and roster disagree — surface it rather than skip a slot.
+    throw new Error(`Plan slot ${i} belongs to a participant who is no longer in the session.`);
+  }
+  return {
+    speakerId: agent.id,
+    speakerDisplayName: agent.displayName,
+    turnType,
+    turnClass: 'full',
+    modelId: agent.modelId,
+    personaId: agent.personaId,
+    temperature: agent.temperature,
+    maxWords,
+    agent,
+    instructionOpts: {},
+    planSlot: i,
+    slot,
   };
 }
