@@ -104,11 +104,13 @@ export interface ModelEntry {
   // call the tool) when given a small budget on a search-expected turn. The tool
   // loop must never hand these a sub-500-token budget where search may run.
   needsTokenHeadroomForTools?: boolean;
-  // Cap a reasoning model's hidden thinking. Some models (Grok 4.x via
-  // OpenRouter) reason at 'high' by default and that reasoning is NOT bounded by
-  // max_tokens — a single call can think for 60s+ and thousands of billed tokens,
-  // blowing the turn's time limit. Unset → the provider default.
+  // Optional override of a reasoning model's effort (OpenRouter `reasoning`).
+  // Unset → the provider default, which is the rule for frontier models: capping
+  // a flagship's reasoning would make it compete below its class.
   reasoningEffort?: ReasoningEffort;
+  // Per-call HTTP timeout for slow reasoning models (default 90s). Grok 4.x at
+  // full effort spends up to ~66s on one call, too close to the default.
+  callTimeoutMs?: number;
   // Per-model calibration for the stated word budget. Some models systematically
   // overrun the word target; a factor < 1 tells them a lower number so actual
   // output lands near maxWordsPerTurn. Defaults to the provider factor, else 1.
@@ -375,6 +377,8 @@ export interface GenerateParams {
   // Reasoning effort for models that reason by default (sent as OpenRouter's
   // `reasoning: { effort }`). Unset → the provider's default.
   reasoningEffort?: ReasoningEffort;
+  // Per-call HTTP timeout override (ms); unset → the adapter default (90s).
+  timeoutMs?: number;
 }
 
 // Normalised finish reason across providers.

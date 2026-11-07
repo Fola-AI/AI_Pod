@@ -208,6 +208,7 @@ export async function executeTurn(
       adapter.generate({
         apiModelString: model.apiModelString,
       reasoningEffort: model.reasoningEffort,
+      timeoutMs: model.callTimeoutMs,
         systemPrompt,
         messages: [{ role: 'user', content: userMessage }],
         temperature: plan.temperature,
@@ -252,6 +253,7 @@ export async function executeTurn(
     const base = {
       apiModelString: model.apiModelString,
       reasoningEffort: model.reasoningEffort,
+      timeoutMs: model.callTimeoutMs,
       systemPrompt,
       messages: [{ role: 'user' as const, content: userMessage }],
       temperature: plan.temperature,

@@ -141,7 +141,7 @@ export function createOpenAICompatibleAdapter(
           : {}),
       });
       const start = Date.now();
-      let res = await postJson(url, makeBody(), headers);
+      let res = await postJson(url, makeBody(), headers, params.timeoutMs);
       for (let i = 0; i < 3 && !res.ok && res.status === 400; i++) {
         const msg = res.json?.error?.message ?? res.text ?? '';
         if (useTemperature && /temperature/i.test(msg)) {
@@ -154,7 +154,7 @@ export function createOpenAICompatibleAdapter(
         } else {
           break; // not a recoverable parameter error
         }
-        res = await postJson(url, makeBody(), headers);
+        res = await postJson(url, makeBody(), headers, params.timeoutMs);
       }
       const { ok, status, json, text } = res;
       const latencyMs = Date.now() - start;
