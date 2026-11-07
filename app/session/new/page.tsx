@@ -416,7 +416,7 @@ export default function NewSessionPage() {
     setPresetModified(true);
   }, [presetId, format, targetWordCount, interjectionFrequency, interjectionRate, openingBanter, searchMode, agents]);
 
-  async function submit() {
+  async function submit(saveForLater = false) {
     if (!title.trim()) return toast.error('Add a title.');
     if (!topic.trim()) return toast.error('Add a topic.');
     if (stanceRequired && format === 'debate') {
@@ -480,8 +480,13 @@ export default function NewSessionPage() {
           researchPack: researchPack || undefined,
         },
       });
-      toast.success('Session created');
-      router.push(`/session/${session.id}`);
+      if (saveForLater) {
+        toast.success('Saved as draft — resume it from the dashboard.');
+        router.push('/');
+      } else {
+        toast.success('Session created');
+        router.push(`/session/${session.id}`);
+      }
     } catch (err) {
       toast.error((err as Error).message);
       setSaving(false);
@@ -1376,7 +1381,15 @@ export default function NewSessionPage() {
         <Button variant="outline" onClick={() => router.push('/')}>
           Cancel
         </Button>
-        <Button onClick={submit} disabled={saving}>
+        <Button
+          variant="secondary"
+          onClick={() => submit(true)}
+          disabled={saving}
+          title="Save as a draft without starting it — resume from the dashboard"
+        >
+          {saving ? 'Saving…' : 'Save for later'}
+        </Button>
+        <Button onClick={() => submit(false)} disabled={saving}>
           {saving ? 'Creating…' : 'Create session'}
         </Button>
       </div>

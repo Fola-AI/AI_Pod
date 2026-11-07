@@ -178,6 +178,20 @@ export const MODELS: ModelEntry[] = [
   },
   // --- Google ---
   {
+    id: 'gemini-4-argon',
+    provider: 'google',
+    apiModelString: 'gemini-4-argon',
+    displayName: 'Gemini 4 Argon',
+    tier: 'frontier', // newest Google flagship (verified callable live 2026-11)
+    // Pricing/context not published via the API yet — left unknown rather than
+    // guessed (cost tracking under-reports until filled, as with 3.1 Pro preview).
+    contextWindow: 1_000_000,
+    inputPricePerMTok: null,
+    outputPricePerMTok: null,
+    supportsSystemPrompt: true,
+    enabled: true,
+  },
+  {
     id: 'gemini-3-8-flash',
     provider: 'google',
     apiModelString: 'gemini-3.8-flash',
