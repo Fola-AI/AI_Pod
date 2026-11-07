@@ -13,6 +13,7 @@ import {
 import type { ColdOpen, Session, SessionConfig, Turn } from '@/lib/types';
 import {
   postTurn,
+  closeSession,
   regenerateTurn,
   editTurn,
   deleteTurn,
@@ -125,6 +126,11 @@ export function SessionView({ initial }: { initial: Session }) {
 
   const runningRef = useRef(false);
   const stopRef = useRef(false);
+  // Stop & close: aborts the in-flight turn request; the loop must treat that
+  // abort as a user stop, not a failure.
+  const abortRef = useRef<AbortController | null>(null);
+  const closingRef = useRef(false);
+  const [closing, setClosing] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const complete = status === 'complete';
@@ -181,7 +187,10 @@ export function SessionView({ initial }: { initial: Session }) {
       while (true) {
         const stopNow = stopRef.current;
         stopRef.current = false;
-        const res = await postTurn(initial.id, stopNow);
+        const ac = new AbortController();
+        abortRef.current = ac;
+        const res = await postTurn(initial.id, stopNow, ac.signal);
+        if (closingRef.current) break; // Stop & close landed mid-request
 
         if (res.turn) {
           setTurns((prev) => [...prev, res.turn as Turn]);
@@ -197,6 +206,8 @@ export function SessionView({ initial }: { initial: Session }) {
         if (!runningRef.current) break;
       }
     } catch (err) {
+      // Stop & close aborted the request — a user stop, not a failure.
+      if (closingRef.current || (err as Error).name === 'AbortError') return;
       const e = err as ApiError;
       // Fatal → halt and surface the provider's verbatim message with recovery
       // options. Transient (already retried server-side) also halts with Retry.
@@ -214,6 +225,7 @@ export function SessionView({ initial }: { initial: Session }) {
         at: new Date().toISOString(),
       });
     } finally {
+      abortRef.current = null;
       runningRef.current = false;
       setRunning(false);
     }
@@ -241,9 +253,40 @@ export function SessionView({ initial }: { initial: Session }) {
     runLoop();
   }, [initial.id, turns.length, runLoop]);
 
-  function requestStop() {
+  // Wrap up: after the current turn, go straight to closing statements.
+  function requestWrapUp() {
     stopRef.current = true;
-    toast.info('Wrapping up — moving to closing statements.');
+    toast.info('Wrapping up — closing statements start after the current turn.');
+  }
+
+  // Stop & close: end the session NOW, as it stands. The turn being generated is
+  // cancelled and discarded (the server re-checks before saving); no closing
+  // statements are added. Exports and the voice pass unlock immediately.
+  async function stopAndClose() {
+    if (
+      !confirm(
+        'Stop now and close this session? The turn in progress is discarded and no closing statements are added. The transcript ends here.',
+      )
+    )
+      return;
+    closingRef.current = true;
+    runningRef.current = false;
+    abortRef.current?.abort();
+    setClosing(true);
+    try {
+      const s = await closeSession(initial.id);
+      setTurns(s.turns);
+      setTotalWords(s.totalWords);
+      setTotalCostUsd(s.totalCostUsd);
+      setStatus('complete');
+      setFatal(null);
+      toast.success('Session stopped and closed.');
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      closingRef.current = false;
+      setClosing(false);
+    }
   }
 
   // Rerun: wipe the transcript and start over from the same config. Destructive.
@@ -590,8 +633,23 @@ export function SessionView({ initial }: { initial: Session }) {
           </Button>
         )}
         {running && (
-          <Button variant="outline" onClick={requestStop}>
-            Stop &amp; close
+          <Button
+            variant="outline"
+            onClick={requestWrapUp}
+            title="After the current turn, go straight to closing statements"
+          >
+            Wrap up
+          </Button>
+        )}
+        {!complete && (running || turns.length > 0) && (
+          <Button
+            variant="outline"
+            onClick={stopAndClose}
+            disabled={closing}
+            className="text-destructive hover:text-destructive"
+            title="End the session now: the turn in progress is discarded, no closing statements"
+          >
+            {closing ? 'Closing…' : 'Stop & close'}
           </Button>
         )}
         {error && !running && (

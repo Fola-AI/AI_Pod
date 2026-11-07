@@ -219,6 +219,24 @@ export async function appendTurn(
   return rowToTurn(row);
 }
 
+/** Current status only — a cheap re-check before persisting a turn. */
+export async function getSessionStatus(id: string): Promise<SessionStatus | null> {
+  const [row] = await db
+    .select({ status: sessions.status })
+    .from(sessions)
+    .where(eq(sessions.id, id));
+  return (row?.status as SessionStatus | undefined) ?? null;
+}
+
+/** Stop & close: end the session now, as it stands. No more turns are generated. */
+export async function closeSession(id: string): Promise<Session | null> {
+  await db
+    .update(sessions)
+    .set({ status: 'complete', completedAt: new Date() })
+    .where(eq(sessions.id, id));
+  return getSession(id);
+}
+
 export async function setSessionStatus(
   id: string,
   status: SessionStatus,

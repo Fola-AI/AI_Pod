@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { getSession, appendTurn, setSessionError } from '@/lib/db/queries';
+import { getSession, appendTurn, setSessionError, getSessionStatus } from '@/lib/db/queries';
 import { planNextTurn } from '@/lib/orchestrator';
 import { executeTurn } from '@/lib/execute-turn';
 import { countWords } from '@/lib/cost';
@@ -60,6 +60,15 @@ export async function POST(request: Request) {
   const session = await getSession(sessionId);
   if (!session) {
     return NextResponse.json({ error: 'Session not found' }, { status: 404 });
+  }
+  // Closed (finished, or Stop & close): never generate another turn.
+  if (session.status === 'complete') {
+    return NextResponse.json({
+      complete: true,
+      turn: null,
+      totalWords: session.totalWords,
+      totalCostUsd: session.totalCostUsd,
+    });
   }
 
   // Budget cap: once actual spend exceeds it, jump straight to closings.
@@ -179,6 +188,18 @@ export async function POST(request: Request) {
   );
   const complete = nextPlan === null;
   const status = complete ? 'complete' : 'running';
+
+  // Stop & close may have landed while this turn was generating. The session is
+  // closed as it stood at that moment — discard this turn rather than append it.
+  if ((await getSessionStatus(sessionId)) === 'complete') {
+    return NextResponse.json({
+      complete: true,
+      turn: null,
+      discarded: true,
+      totalWords: session.totalWords,
+      totalCostUsd: session.totalCostUsd,
+    });
+  }
 
   const savedTurn = await appendTurn(sessionId, executed, index, {
     totalWords,

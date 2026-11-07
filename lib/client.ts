@@ -184,13 +184,22 @@ export interface TurnResponse {
 export async function postTurn(
   sessionId: string,
   stopRequested = false,
+  signal?: AbortSignal,
 ): Promise<TurnResponse> {
   const res = await fetch('/api/turn', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sessionId, stopRequested }),
+    signal,
   });
   return jsonOrThrow(res);
+}
+
+/** Stop & close: end the session now, as it stands. */
+export async function closeSession(sessionId: string): Promise<Session> {
+  const res = await fetch(`/api/sessions/${sessionId}/close`, { method: 'POST' });
+  const data = await jsonOrThrow(res);
+  return data.session;
 }
 
 export interface TurnMutationResponse {
