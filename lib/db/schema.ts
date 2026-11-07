@@ -112,3 +112,21 @@ export type SessionRow = typeof sessions.$inferSelect;
 export type TurnRow = typeof turns.$inferSelect;
 export type PersonaRow = typeof personas.$inferSelect;
 export type CharacterRow = typeof characters.$inferSelect;
+
+// Builder drafts (Batch A). A draft is one specific planned session saved from
+// the New Session builder before it is run — possibly incomplete (no agents, no
+// topic). Kept in its own table, NOT as a sessions row: sessions.status 'draft'
+// already means "created but not yet run", and every run/export path assumes a
+// complete, validated SessionConfig. `state` is the raw builder state (JSON), so
+// new builder fields round-trip without a migration. title/format are
+// denormalised for the Drafts list. Creating the session deletes the draft.
+export const sessionDrafts = pgTable('session_drafts', {
+  id: text('id').primaryKey(),
+  title: text('title').notNull(),
+  format: text('format').notNull(),
+  state: jsonb('state').$type<Record<string, unknown>>().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type SessionDraftRow = typeof sessionDrafts.$inferSelect;

@@ -2,8 +2,8 @@
 
 import { and, asc, eq, gt } from 'drizzle-orm';
 import { db } from './index';
-import { sessions, turns } from './schema';
-import type { SessionRow, TurnRow } from './schema';
+import { sessions, turns, sessionDrafts } from './schema';
+import type { SessionRow, TurnRow, SessionDraftRow } from './schema';
 import type {
   Claim,
   ClaimConflict,
@@ -368,4 +368,93 @@ export async function recomputeAggregates(
     .set({ totalWords, totalCostUsd })
     .where(eq(sessions.id, sessionId));
   return { totalWords, totalCostUsd };
+}
+
+
+// --- Builder drafts (Batch A) -------------------------------------------------
+// Drafts live in their own table and never touch the sessions run/export paths.
+// `state` is the raw New Session builder state, which may be incomplete.
+
+export interface DraftSummary {
+  id: string;
+  title: string;
+  format: string;
+  agentCount: number;
+  rounds?: number; // Structured Rounds only
+  updatedAt: string;
+}
+
+export interface DraftRecord {
+  id: string;
+  title: string;
+  format: string;
+  state: Record<string, unknown>;
+  updatedAt: string;
+}
+
+const iso = (d: Date | string) => (d instanceof Date ? d.toISOString() : String(d));
+
+/** Only a title is required to save a draft; empty falls back to "Untitled draft". */
+function draftTitle(state: Record<string, unknown>): string {
+  const t = typeof state.title === 'string' ? state.title.trim() : '';
+  return t || 'Untitled draft';
+}
+function draftFormat(state: Record<string, unknown>): string {
+  return typeof state.format === 'string' && state.format ? state.format : 'panel';
+}
+
+function toSummary(r: SessionDraftRow): DraftSummary {
+  const st = r.state ?? {};
+  const agents = Array.isArray(st.agents) ? st.agents : [];
+  const sr = st.structuredRounds as { rounds?: unknown[] } | undefined;
+  return {
+    id: r.id,
+    title: r.title,
+    format: r.format,
+    agentCount: agents.length,
+    rounds:
+      r.format === 'structured-rounds' && Array.isArray(sr?.rounds) ? sr!.rounds!.length : undefined,
+    updatedAt: iso(r.updatedAt),
+  };
+}
+
+export async function listDrafts(): Promise<DraftSummary[]> {
+  const rows = await db.select().from(sessionDrafts);
+  return rows.map(toSummary).sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+}
+
+export async function getDraft(id: string): Promise<DraftRecord | null> {
+  const [r] = await db.select().from(sessionDrafts).where(eq(sessionDrafts.id, id));
+  if (!r) return null;
+  return { id: r.id, title: r.title, format: r.format, state: r.state, updatedAt: iso(r.updatedAt) };
+}
+
+export async function createDraft(state: Record<string, unknown>): Promise<DraftSummary> {
+  const [r] = await db
+    .insert(sessionDrafts)
+    .values({
+      id: crypto.randomUUID(),
+      title: draftTitle(state),
+      format: draftFormat(state),
+      state,
+    })
+    .returning();
+  return toSummary(r);
+}
+
+/** Update in place (never a second row). Returns null if the draft no longer exists. */
+export async function updateDraft(
+  id: string,
+  state: Record<string, unknown>,
+): Promise<DraftSummary | null> {
+  const [r] = await db
+    .update(sessionDrafts)
+    .set({ title: draftTitle(state), format: draftFormat(state), state, updatedAt: new Date() })
+    .where(eq(sessionDrafts.id, id))
+    .returning();
+  return r ? toSummary(r) : null;
+}
+
+export async function deleteDraft(id: string): Promise<void> {
+  await db.delete(sessionDrafts).where(eq(sessionDrafts.id, id));
 }

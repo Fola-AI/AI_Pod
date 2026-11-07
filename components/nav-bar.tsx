@@ -6,6 +6,7 @@
 // Live Session. The active nav link is highlighted.
 
 import Link from 'next/link';
+import { guardNavigation } from '@/lib/nav-guard';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 
@@ -31,7 +32,11 @@ export function NavBar() {
   useEffect(() => {
     if (onGate || onDashboard || liveSession) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') router.push('/');
+      if (e.key !== 'Escape') return;
+      // Escape inside an open dialog / dropdown closes that, it doesn't leave the page.
+      if (e.defaultPrevented || document.querySelector('[role="dialog"], [role="listbox"]')) return;
+      if (guardNavigation('/')) return; // unsaved work — the page shows its prompt
+      router.push('/');
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -54,12 +59,21 @@ export function NavBar() {
           {!onDashboard && (
             <Link
               href="/"
+              onNavigate={(e) => {
+                if (guardNavigation('/')) e.preventDefault();
+              }}
               className="text-sm text-muted-foreground hover:text-foreground shrink-0"
             >
               ← Dashboard
             </Link>
           )}
-          <Link href="/" className="font-semibold tracking-tight truncate">
+          <Link
+            href="/"
+            onNavigate={(e) => {
+              if (guardNavigation('/')) e.preventDefault();
+            }}
+            className="font-semibold tracking-tight truncate"
+          >
             AI&nbsp;Pod
           </Link>
         </div>
@@ -74,6 +88,9 @@ export function NavBar() {
               <Link
                 key={item.href}
                 href={item.href}
+                onNavigate={(e) => {
+                  if (guardNavigation(item.href)) e.preventDefault();
+                }}
                 aria-current={active ? 'page' : undefined}
                 className={
                   active ? 'text-foreground font-medium' : 'hover:text-foreground'

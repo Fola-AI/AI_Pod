@@ -1,10 +1,11 @@
 import Link from 'next/link';
-import { listSessions } from '@/lib/db/queries';
+import { listDrafts, listSessions } from '@/lib/db/queries';
 import { FORMATS } from '@/lib/formats';
 import { formatUsd } from '@/lib/cost';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { DeleteSessionButton } from '@/components/delete-session-button';
+import { DeleteDraftButton } from '@/components/delete-draft-button';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,6 +23,13 @@ export default async function Dashboard() {
     sessions = await listSessions();
   } catch (err) {
     dbError = (err as Error).message;
+  }
+  // Drafts are loaded separately so a drafts problem never hides the Sessions list.
+  let drafts: Awaited<ReturnType<typeof listDrafts>> = [];
+  try {
+    drafts = await listDrafts();
+  } catch {
+    drafts = [];
   }
 
   return (
@@ -50,6 +58,52 @@ export default async function Dashboard() {
             <code className="font-mono">npm run db:push</code>. ({dbError})
           </p>
         </div>
+      )}
+
+      {drafts.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-medium text-muted-foreground">Drafts</h2>
+          <div className="divide-y rounded-lg border border-dashed">
+            {drafts.map((d) => (
+              <div key={d.id} className="flex items-center justify-between gap-4 p-4">
+                <div className="min-w-0">
+                  <Link
+                    href={`/session/new?draft=${d.id}`}
+                    className="font-medium hover:underline block truncate"
+                  >
+                    {d.title}
+                  </Link>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <Badge variant="outline">draft</Badge>
+                    <span>{FORMATS[d.format as keyof typeof FORMATS]?.label ?? d.format}</span>
+                    <span>·</span>
+                    <span>
+                      {d.agentCount} {d.agentCount === 1 ? 'agent' : 'agents'}
+                    </span>
+                    {d.rounds !== undefined && (
+                      <>
+                        <span>·</span>
+                        <span>{d.rounds} rounds</span>
+                      </>
+                    )}
+                    <span>·</span>
+                    <span>edited {d.updatedAt.slice(0, 16).replace('T', ' ')}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <Button
+                    render={<Link href={`/session/new?draft=${d.id}`} />}
+                    variant="ghost"
+                    size="sm"
+                  >
+                    Open
+                  </Button>
+                  <DeleteDraftButton id={d.id} title={d.title} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
       {!dbError && sessions.length === 0 && (

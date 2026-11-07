@@ -320,3 +320,43 @@ export async function removeAgent(
   const data = await jsonOrThrow(res);
   return data.session;
 }
+
+// --- Builder drafts (Batch A) ---
+export type { DraftSummary, DraftRecord } from '@/lib/db/queries';
+
+export async function listDrafts(): Promise<import('@/lib/db/queries').DraftSummary[]> {
+  const res = await fetch('/api/drafts', { cache: 'no-store' });
+  return (await jsonOrThrow(res)).drafts;
+}
+
+export async function getDraft(id: string): Promise<import('@/lib/db/queries').DraftRecord> {
+  const res = await fetch(`/api/drafts/${id}`, { cache: 'no-store' });
+  return (await jsonOrThrow(res)).draft;
+}
+
+/**
+ * Save builder state as a draft: update in place when `id` is given (never a
+ * duplicate), create otherwise — or if the draft was deleted elsewhere.
+ * Returns the draft id.
+ */
+export async function saveDraft(id: string | null, state: Record<string, unknown>): Promise<string> {
+  if (id) {
+    const res = await fetch(`/api/drafts/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state }),
+    });
+    if (res.status !== 404) return (await jsonOrThrow(res)).draft.id;
+  }
+  const res = await fetch('/api/drafts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ state }),
+  });
+  return (await jsonOrThrow(res)).draft.id;
+}
+
+export async function deleteDraft(id: string): Promise<void> {
+  const res = await fetch(`/api/drafts/${id}`, { method: 'DELETE' });
+  await jsonOrThrow(res);
+}

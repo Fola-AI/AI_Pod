@@ -77,7 +77,21 @@ import {
   fetchPersonas,
   fetchCharacters,
   testModel,
+  listDrafts,
+  getDraft,
+  saveDraft,
+  deleteDraft,
+  type DraftSummary,
 } from '@/lib/client';
+import { setNavGuard } from '@/lib/nav-guard';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { estimateSessionCost, formatUsd } from '@/lib/cost';
 import { PRESETS } from '@/lib/presets';
 
@@ -189,6 +203,190 @@ export default function NewSessionPage() {
       .then(setCharacters)
       .catch(() => setCharacters([]));
   }, []);
+
+  // ---- Drafts (Batch A) ------------------------------------------------------
+  // A draft is the complete builder state, saved without starting a session and
+  // possibly incomplete. Agents keep their ids so relationships and characters
+  // restore exactly; personas are stored by id and snapshotted at Create
+  // session, as today. Drafts live in their own table (never in run history).
+  const [draftId, setDraftId] = useState<string | null>(null);
+  const draftIdRef = useRef<string | null>(null);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
+  const [baselineReq, setBaselineReq] = useState(0);
+  const [leavePrompt, setLeavePrompt] = useState<null | { proceed: () => void }>(null);
+  const [loadOpen, setLoadOpen] = useState(false);
+  const [draftList, setDraftList] = useState<DraftSummary[] | null>(null);
+
+  function serializeState(): Record<string, unknown> {
+    return {
+      v: 1,
+      title,
+      topic,
+      format,
+      domain,
+      targetWordCount,
+      maxTurns,
+      budgetCap,
+      agents,
+      sources,
+      relationships,
+      moderator: {
+        name: modName,
+        modelId: modModelId,
+        voiceId: modVoiceId,
+        interjectionFrequency,
+      },
+      interjectionRate,
+      openingBanter,
+      webSearch: { mode: searchMode, forceFirstSearch, researchPack },
+      presetId,
+      presetModified,
+      tierMatchInfo,
+    };
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function applyState(st: Record<string, any>) {
+    // Restoring a draft is not a preset "modification".
+    applyingPreset.current = Boolean(st.presetId);
+    setTitle(st.title ?? '');
+    setTopic(st.topic ?? '');
+    setFormat(st.format ?? 'panel');
+    setDomain(st.domain ?? 'general');
+    setTargetWordCount(st.targetWordCount ?? 2600);
+    setMaxTurns(st.maxTurns ?? 24);
+    setBudgetCap(st.budgetCap ?? '');
+    setAgents(Array.isArray(st.agents) ? st.agents : []);
+    setSources(Array.isArray(st.sources) ? st.sources : []);
+    setRelationships(Array.isArray(st.relationships) ? st.relationships : []);
+    setModName(st.moderator?.name ?? 'Moderator');
+    setModModelId(st.moderator?.modelId ?? FRONTIER_DEFAULT);
+    setModVoiceId(st.moderator?.voiceId ?? '');
+    setInterjectionFrequency(st.moderator?.interjectionFrequency ?? 'medium');
+    setInterjectionRate(st.interjectionRate ?? 'medium');
+    setOpeningBanter(st.openingBanter ?? true);
+    setSearchMode(st.webSearch?.mode ?? 'shared');
+    setForceFirstSearch(st.webSearch?.forceFirstSearch ?? false);
+    setResearchPack(st.webSearch?.researchPack ?? false);
+    setPresetId(st.presetId ?? null);
+    setPresetModified(st.presetModified ?? false);
+    setTierMatchInfo(st.tierMatchInfo ?? null);
+  }
+
+  // The builder's defaults — what "New session" opens with.
+  function blankState(): Record<string, unknown> {
+    return { agents: [makeAgent(0), makeAgent(1), makeAgent(2)] };
+  }
+
+  // Unsaved-changes tracking: compare the live state to the last saved/loaded
+  // baseline. The baseline is taken on the render that already shows new state.
+  const currentJson = JSON.stringify(serializeState());
+  useEffect(() => {
+    if (baselineReq) setSavedSnapshot(currentJson);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baselineReq]);
+  const dirty = savedSnapshot !== null && currentJson !== savedSnapshot;
+
+  async function loadDraftById(id: string) {
+    try {
+      const d = await getDraft(id);
+      applyState(d.state);
+      draftIdRef.current = d.id;
+      setDraftId(d.id);
+      if (new URLSearchParams(window.location.search).get('draft') !== d.id) {
+        window.history.replaceState(null, '', `/session/new?draft=${d.id}`);
+      }
+      setBaselineReq((n) => n + 1);
+      toast.success(`Loaded draft: ${d.title}`);
+    } catch (err) {
+      toast.error(`Couldn't open draft: ${(err as Error).message}`);
+    }
+  }
+
+  function resetToBlank() {
+    applyState(blankState());
+    draftIdRef.current = null;
+    setDraftId(null);
+    setBaselineReq((n) => n + 1);
+  }
+
+  // The URL carries the draft id (/session/new?draft=<id>). Read it on mount from
+  // window.location rather than useSearchParams: that hook forces a Suspense
+  // boundary on this prerendered route, and the builder inside it then wasn't
+  // hydrated until the first user event (which it swallowed — first click lost).
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('draft');
+    if (id) void loadDraftById(id);
+    else setBaselineReq((n) => n + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** Save the builder as a draft. First save creates it; later saves update it. */
+  async function saveDraftNow(): Promise<boolean> {
+    setSavingDraft(true);
+    try {
+      const st = serializeState();
+      const id = await saveDraft(draftIdRef.current, st);
+      draftIdRef.current = id; // before the URL changes, so it isn't re-loaded
+      setDraftId(id);
+      window.history.replaceState(null, '', `/session/new?draft=${id}`);
+      setSavedSnapshot(JSON.stringify(st));
+      toast.success(title.trim() ? 'Draft saved' : 'Draft saved as “Untitled draft”');
+      return true;
+    } catch (err) {
+      toast.error((err as Error).message);
+      return false;
+    } finally {
+      setSavingDraft(false);
+    }
+  }
+
+  // While there are unsaved changes: in-app navigation (nav bar, Escape, Cancel,
+  // loading another draft) shows the Save draft / Discard / Cancel prompt, and
+  // browser-level exits get the native "Leave site?" warning.
+  function guarded(proceed: () => void) {
+    if (dirty) setLeavePrompt({ proceed });
+    else proceed();
+  }
+  useEffect(() => {
+    setNavGuard((href) => {
+      // "New session" while already in the builder: Next would keep this page
+      // mounted with the current draft, so start a blank builder here instead
+      // (asking first if there are unsaved changes).
+      if (href === '/session/new') {
+        guarded(() => {
+          resetToBlank();
+          window.history.replaceState(null, '', '/session/new');
+        });
+        return true;
+      }
+      if (!dirty) return false;
+      setLeavePrompt({ proceed: () => router.push(href) });
+      return true;
+    });
+    return () => setNavGuard(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dirty, router]);
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty]);
+
+  async function openLoadDrafts() {
+    setLoadOpen(true);
+    setDraftList(null);
+    try {
+      setDraftList(await listDrafts());
+    } catch {
+      setDraftList([]);
+    }
+  }
 
   function addSource() {
     if (sources.length >= 5) return toast.error('Up to 5 documents.');
@@ -416,7 +614,7 @@ export default function NewSessionPage() {
     setPresetModified(true);
   }, [presetId, format, targetWordCount, interjectionFrequency, interjectionRate, openingBanter, searchMode, agents]);
 
-  async function submit(saveForLater = false) {
+  async function submit() {
     if (!title.trim()) return toast.error('Add a title.');
     if (!topic.trim()) return toast.error('Add a topic.');
     if (stanceRequired && format === 'debate') {
@@ -480,13 +678,16 @@ export default function NewSessionPage() {
           researchPack: researchPack || undefined,
         },
       });
-      if (saveForLater) {
-        toast.success('Saved as draft — resume it from the dashboard.');
-        router.push('/');
-      } else {
-        toast.success('Session created');
-        router.push(`/session/${session.id}`);
+      // A draft that's been run becomes this session: remove it from Drafts.
+      if (draftIdRef.current) {
+        await deleteDraft(draftIdRef.current).catch(() =>
+          toast.warning('Session created, but the draft could not be removed from Drafts.'),
+        );
+        draftIdRef.current = null;
       }
+      setNavGuard(null);
+      toast.success('Session created');
+      router.push(`/session/${session.id}`);
     } catch (err) {
       toast.error((err as Error).message);
       setSaving(false);
@@ -503,6 +704,9 @@ export default function NewSessionPage() {
           </p>
         </div>
         <div className="flex items-end gap-3">
+          <Button variant="outline" onClick={openLoadDrafts}>
+            Load draft
+          </Button>
           <div className="w-48">
             <Label className="text-xs">Start from a preset</Label>
             <Select
@@ -1378,21 +1582,108 @@ export default function NewSessionPage() {
       <Separator />
 
       <div className="flex items-center justify-end gap-3">
-        <Button variant="outline" onClick={() => router.push('/')}>
+        {draftId && (
+          <span className="mr-auto text-xs text-muted-foreground">
+            Draft · {dirty ? 'unsaved changes' : 'saved'}
+          </span>
+        )}
+        <Button variant="outline" onClick={() => guarded(() => router.push('/'))}>
           Cancel
         </Button>
         <Button
           variant="secondary"
-          onClick={() => submit(true)}
-          disabled={saving}
-          title="Save as a draft without starting it — resume from the dashboard"
+          onClick={() => void saveDraftNow()}
+          disabled={saving || savingDraft}
+          title="Save the whole setup as a draft without starting it (only a title is needed). Reopen it from Drafts on the Dashboard."
         >
-          {saving ? 'Saving…' : 'Save for later'}
+          {savingDraft ? 'Saving…' : 'Save for later'}
         </Button>
-        <Button onClick={() => submit(false)} disabled={saving}>
+        <Button onClick={() => submit()} disabled={saving || savingDraft}>
           {saving ? 'Creating…' : 'Create session'}
         </Button>
       </div>
+
+      {/* Unsaved changes: Save draft / Discard / Cancel (A5). */}
+      <Dialog open={!!leavePrompt} onOpenChange={(o) => !o && setLeavePrompt(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Unsaved changes</DialogTitle>
+            <DialogDescription>
+              This setup has changes that aren’t saved. Save it as a draft before leaving?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setLeavePrompt(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                const go = leavePrompt?.proceed;
+                setNavGuard(null);
+                setLeavePrompt(null);
+                go?.();
+              }}
+            >
+              Discard
+            </Button>
+            <Button
+              disabled={savingDraft}
+              onClick={async () => {
+                const go = leavePrompt?.proceed;
+                if (await saveDraftNow()) {
+                  setNavGuard(null);
+                  setLeavePrompt(null);
+                  go?.();
+                }
+              }}
+            >
+              {savingDraft ? 'Saving…' : 'Save draft'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Load draft (same list as the Dashboard's Drafts section). */}
+      <Dialog open={loadOpen} onOpenChange={(o) => !o && setLoadOpen(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Load draft</DialogTitle>
+            <DialogDescription>Open a saved setup into the builder.</DialogDescription>
+          </DialogHeader>
+          {draftList === null ? (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : draftList.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No drafts yet.</p>
+          ) : (
+            <div className="max-h-80 overflow-y-auto divide-y rounded-md border">
+              {draftList.map((d) => (
+                <button
+                  key={d.id}
+                  type="button"
+                  className="w-full text-left p-3 hover:bg-muted/50 disabled:opacity-50"
+                  disabled={d.id === draftId}
+                  onClick={() => {
+                    setLoadOpen(false);
+                    guarded(() => void loadDraftById(d.id));
+                  }}
+                >
+                  <p className="text-sm font-medium truncate">
+                    {d.title}
+                    {d.id === draftId ? ' (open)' : ''}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {FORMATS[d.format as SessionFormat]?.label ?? d.format} · {d.agentCount}{' '}
+                    {d.agentCount === 1 ? 'agent' : 'agents'}
+                    {d.rounds !== undefined ? ` · ${d.rounds} rounds` : ''} · edited{' '}
+                    {new Date(d.updatedAt).toLocaleString()}
+                  </p>
+                </button>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
