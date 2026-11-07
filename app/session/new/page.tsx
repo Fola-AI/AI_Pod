@@ -1594,9 +1594,9 @@ export default function NewSessionPage() {
           </div>
           <div className="flex items-center gap-2">
             <Button
-              type="button"
               variant="outline"
               size="sm"
+              nativeButton={false}
               render={<label htmlFor="src-upload" />}
             >
               Upload .txt/.md

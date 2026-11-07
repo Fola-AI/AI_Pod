@@ -42,10 +42,10 @@ export default async function Dashboard() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" render={<Link href="/library" />}>
+          <Button variant="outline" nativeButton={false} render={<Link href="/library" />}>
             Characters &amp; personas
           </Button>
-          <Button render={<Link href="/session/new" />}>New session</Button>
+          <Button nativeButton={false} render={<Link href="/session/new" />}>New session</Button>
         </div>
       </div>
 
@@ -92,7 +92,7 @@ export default async function Dashboard() {
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <Button
-                    render={<Link href={`/session/new?draft=${d.id}`} />}
+                    nativeButton={false} render={<Link href={`/session/new?draft=${d.id}`} />}
                     variant="ghost"
                     size="sm"
                   >
@@ -109,7 +109,7 @@ export default async function Dashboard() {
       {!dbError && sessions.length === 0 && (
         <div className="rounded-lg border border-dashed p-10 text-center">
           <p className="text-muted-foreground">No sessions yet.</p>
-          <Button render={<Link href="/session/new" />} className="mt-4">
+          <Button nativeButton={false} render={<Link href="/session/new" />} className="mt-4">
             Create your first session
           </Button>
         </div>
@@ -151,7 +151,7 @@ export default async function Dashboard() {
               </div>
               <div className="flex items-center gap-1 shrink-0">
                 <Button
-                  render={<Link href={`/session/${s.id}`} />}
+                  nativeButton={false} render={<Link href={`/session/${s.id}`} />}
                   variant={s.status === 'running' ? 'default' : 'ghost'}
                   size="sm"
                 >

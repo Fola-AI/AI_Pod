@@ -9,6 +9,7 @@ import {
   rebuttalMissingRivals,
   moderatorIssues,
   agentAliases,
+  moderatorSlotInstruction,
 } from './structured-rounds';
 import { planNextTurn } from './orchestrator';
 import type { AgentConfig, SessionConfig, Turn } from './types';
@@ -195,8 +196,37 @@ describe('B8 validators', () => {
     expect(moderatorIssues('Round one: transport. Lara, Tony, Kimi, then Ada present.', intro, c)).toEqual([]);
     expect(moderatorIssues('Round one. Tony, Lara, Kimi and Ada.', intro, c).join()).toMatch(/order/);
     expect(moderatorIssues('Lara, are you ready to begin?', intro, c).join()).toMatch(/question/);
+    // Restating the topic names candidates, not advocates — not a question to anyone.
+    const opening = c.structuredRounds!.plan![0];
+    expect(moderatorIssues('Our topic: which city has the best transport — London, Tokyo, Berlin or Bogotá?', opening, c)).toEqual([]);
     const sIntro = c.structuredRounds!.plan![2]; // SPEAKER_INTRO for Lara
     expect(moderatorIssues('Lara presents for London.', sIntro, c)).toEqual([]);
     expect(moderatorIssues('Tony presents for Tokyo.', sIntro, c).join()).toMatch(/did not introduce Lara/);
+  });
+});
+
+describe('B7 moderator slot prompts — hand-offs and length', () => {
+  it('with speaker intros on, only the speaker intro hands over the floor', () => {
+    const c = cfg();
+    const plan = c.structuredRounds!.plan!;
+    for (const kind of ['OPENING', 'ROUND_INTRO', 'PHASE_SWITCH'] as const) {
+      const slot = plan.find((s) => s.kind === kind)!;
+      expect(moderatorSlotInstruction(c, slot)).toMatch(/Do not hand the floor/);
+    }
+    const intro = plan.find((s) => s.kind === 'SPEAKER_INTRO')!;
+    expect(moderatorSlotInstruction(c, intro)).not.toMatch(/Do not hand the floor/);
+  });
+
+  it('with speaker intros off, the round intro may hand over (no one else will)', () => {
+    const c = cfg({ speakerIntros: false });
+    const slot = c.structuredRounds!.plan!.find((s) => s.kind === 'ROUND_INTRO')!;
+    expect(moderatorSlotInstruction(c, slot)).not.toMatch(/Do not hand the floor/);
+  });
+
+  it('opening and close carry their word limit', () => {
+    const c = cfg();
+    const plan = c.structuredRounds!.plan!;
+    expect(moderatorSlotInstruction(c, plan[0])).toMatch(/under 150 words/);
+    expect(moderatorSlotInstruction(c, plan[plan.length - 1])).toMatch(/under 150 words/);
   });
 });

@@ -40,7 +40,7 @@ export default function LibraryPage() {
             Personas are edited here instead of in code. Characters carry continuity across episodes.
           </p>
         </div>
-        <Button variant="outline" render={<Link href="/" />}>
+        <Button variant="outline" nativeButton={false} render={<Link href="/" />}>
           Back
         </Button>
       </div>

@@ -272,9 +272,16 @@ export function moderatorSlotInstruction(config: SessionConfig, slot: PlanSlot):
   const sr = config.structuredRounds!;
   const R = sr.rounds.length;
   const names = orderNames(config, slot.order);
+  // With speaker intros on, the next slot hands over the floor — so the opening,
+  // round intro, phase switch and closings intro must not (B-2: "Lara, the floor
+  // is yours" three times running).
+  const noHandOff = sr.speakerIntros
+    ? ' Do not hand the floor to anyone; each speaker is introduced separately.'
+    : '';
+  const limit = ` Keep it under ${slotTargetWords(slot, sr)} words.`;
   switch (slot.kind) {
     case 'OPENING':
-      return 'Open the programme. Follow the opening instructions in the session topic. Introduce each advocate and who they present for. Do not ask anyone a question.';
+      return `Open the programme. Follow the opening instructions in the session topic. Introduce each advocate and who they present for. Do not ask anyone a question. Do not hand the floor to anyone; the round introduction follows.${limit}`;
     case 'ROUND_INTRO': {
       const r = slot.round!;
       const round = sr.rounds[r];
@@ -282,7 +289,7 @@ export function moderatorSlotInstruction(config: SessionConfig, slot: PlanSlot):
         r > 0
           ? ' If the previous round contained an unreferenced claim, or an allegation made without a court judgment, add one neutral correction sentence, for example: "For the record, the figure on X was given without a reference and should be set aside."'
           : '';
-      return `Introduce Round ${r + 1} of ${R}: ${round.title}.${round.brief?.trim() ? ` Scope: ${round.brief.trim()}` : ''} State the round number, the theme and the presentation order, exactly: ${names}.${correction} 30 to 50 words. No questions.`;
+      return `Introduce Round ${r + 1} of ${R}: ${round.title}.${round.brief?.trim() ? ` Scope: ${round.brief.trim()}` : ''} State the round number, the theme and the presentation order, exactly: ${names}.${correction} 30 to 50 words. No questions.${noHandOff}`;
     }
     case 'SPEAKER_INTRO': {
       const a = config.agents.find((x) => x.id === slot.introFor);
@@ -290,11 +297,11 @@ export function moderatorSlotInstruction(config: SessionConfig, slot: PlanSlot):
       return `Introduce the next speaker: ${a?.displayName ?? 'the next advocate'}, giving their ${what}${forWhom(a)}. One line, 25 words maximum. No commentary, no questions.`;
     }
     case 'PHASE_SWITCH':
-      return `Announce the rebuttal phase of Round ${slot.round! + 1}: ${sr.rounds[slot.round!].title}. State the rebuttal order, exactly: ${names}. 20 to 40 words. No questions.`;
+      return `Announce the rebuttal phase of Round ${slot.round! + 1}: ${sr.rounds[slot.round!].title}. State the rebuttal order, exactly: ${names}. 20 to 40 words. No questions.${noHandOff}`;
     case 'CLOSINGS_INTRO':
-      return `Announce the closing statements, in this order, exactly: ${names}. 20 to 40 words. No questions.`;
+      return `Announce the closing statements, in this order, exactly: ${names}. 20 to 40 words. No questions.${noHandOff}`;
     case 'CLOSE':
-      return 'Close the programme. Follow the closing instructions in the session topic. Never ask the advocates for a final pick, never comment on who changed position, never declare a winner.';
+      return `Close the programme. Follow the closing instructions in the session topic. Never ask the advocates for a final pick, never comment on who changed position, never declare a winner.${limit}`;
     default:
       return '';
   }
@@ -354,9 +361,12 @@ export function rebuttalMissingRivals(
  */
 export function moderatorIssues(text: string, slot: PlanSlot, config: SessionConfig): string[] {
   const issues: string[] = [];
-  const allNames = config.agents.flatMap((a) => agentAliases(a));
+  // A question is "to an advocate" only if it names the PERSON (display name or a
+  // configured alias). Candidate names don't count: restating the topic — "London,
+  // Tokyo, Berlin or Bogotá?" — is not addressing anyone (false flag in B-2 re-run).
+  const people = config.agents.flatMap((a) => [a.displayName, ...(a.aliases ?? [])]);
   const sentences = text.match(/[^.!?…]*[.!?…]+/g) ?? [text];
-  if (sentences.some((s) => s.trim().endsWith('?') && mentions(s, allNames))) {
+  if (sentences.some((s) => s.trim().endsWith('?') && mentions(s, people))) {
     issues.push('asked an advocate a question');
   }
   if (slot.order && ['ROUND_INTRO', 'PHASE_SWITCH', 'CLOSINGS_INTRO'].includes(slot.kind)) {
