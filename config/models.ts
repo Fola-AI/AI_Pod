@@ -235,9 +235,11 @@ export const MODELS: ModelEntry[] = [
     route: 'openrouter',
     // Full provider-default reasoning ('high') — same as every other flagship;
     // don't cap a frontier model's thinking, it breaks the fair fight. It is
-    // slow: single calls measured up to ~66s (~3.7k reasoning tokens), so give
-    // each call more room than the default 90s.
-    callTimeoutMs: 150_000,
+    // slow: a long-context rebuttal measured 154s and 189s per call (13k–20k
+    // reasoning tokens, 2026-11-08), so the old 150s cap timed the call out
+    // and the turn always died at the 270s deadline. One call may now use
+    // nearly the whole turn budget (a search call first takes ~15s).
+    callTimeoutMs: 240_000,
     contextWindow: 500_000,
     inputPricePerMTok: 2.0,
     outputPricePerMTok: 6.0,
@@ -253,9 +255,11 @@ export const MODELS: ModelEntry[] = [
     route: 'openrouter',
     // Full provider-default reasoning ('high') — same as every other flagship;
     // don't cap a frontier model's thinking, it breaks the fair fight. It is
-    // slow: single calls measured up to ~66s (~3.7k reasoning tokens), so give
-    // each call more room than the default 90s.
-    callTimeoutMs: 150_000,
+    // slow: a long-context rebuttal measured 154s and 189s per call (13k–20k
+    // reasoning tokens, 2026-11-08), so the old 150s cap timed the call out
+    // and the turn always died at the 270s deadline. One call may now use
+    // nearly the whole turn budget (a search call first takes ~15s).
+    callTimeoutMs: 240_000,
     contextWindow: 500_000,
     inputPricePerMTok: 2.0,
     outputPricePerMTok: 6.0,
@@ -271,9 +275,11 @@ export const MODELS: ModelEntry[] = [
     route: 'openrouter',
     // Full provider-default reasoning ('high') — same as every other flagship;
     // don't cap a frontier model's thinking, it breaks the fair fight. It is
-    // slow: single calls measured up to ~66s (~3.7k reasoning tokens), so give
-    // each call more room than the default 90s.
-    callTimeoutMs: 150_000,
+    // slow: a long-context rebuttal measured 154s and 189s per call (13k–20k
+    // reasoning tokens, 2026-11-08), so the old 150s cap timed the call out
+    // and the turn always died at the 270s deadline. One call may now use
+    // nearly the whole turn budget (a search call first takes ~15s).
+    callTimeoutMs: 240_000,
     contextWindow: 500_000,
     inputPricePerMTok: 2.0,
     outputPricePerMTok: 6.0,

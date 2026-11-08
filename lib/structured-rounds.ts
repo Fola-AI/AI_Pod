@@ -168,17 +168,25 @@ function surname(name: string): string {
   return parts.length > 1 ? parts[parts.length - 1] : '';
 }
 
-/** Names that refer to the candidate (not the advocate). */
+/**
+ * Names that refer to the candidate: the candidate field plus any configured
+ * aliases, each with its surname ("President Bola Tinubu" → also "Tinubu").
+ */
 export function candidateAliases(agent: AgentConfig): string[] {
-  const c = agent.candidate?.trim();
-  return c ? Array.from(new Set([c, surname(c)].filter(Boolean))) : [];
+  const configured = Array.isArray(agent.aliases) ? agent.aliases : [];
+  const names = [agent.candidate ?? '', ...configured].map((n) => n.trim()).filter(Boolean);
+  return Array.from(new Set(names.flatMap((n) => [n, surname(n)]).filter(Boolean)));
 }
 
-/** Every name that counts as referring to this advocate or their candidate. */
+/**
+ * Every name that counts as referring to this advocate or their candidate.
+ * Configured aliases ADD to the defaults (advocate name, candidate, surname) —
+ * they used to replace them, so "Aisha" or "Tinubu" stopped counting once an
+ * alias like "President Bola Tinubu" was set (false rebuttal_incomplete flags,
+ * each costing a full retry call).
+ */
 export function agentAliases(agent: AgentConfig): string[] {
-  const configured = (agent.aliases ?? []).map((a) => a.trim()).filter(Boolean);
-  const base = configured.length ? configured : [agent.displayName, ...candidateAliases(agent)];
-  return Array.from(new Set(base.filter(Boolean)));
+  return Array.from(new Set([agent.displayName, ...candidateAliases(agent)].filter(Boolean)));
 }
 
 // Unicode-aware whole-word match: JS \\b is ASCII-only, so "Bogotá" or

@@ -1240,14 +1240,14 @@ export default function NewSessionPage() {
                   <div className="space-y-1.5">
                     <Label className="text-xs">Aliases (comma-separated, optional)</Label>
                     <Input
-                      placeholder={[a.displayName, ...candidateAliases({ ...a, candidate: a.candidate } as never)]
+                      placeholder={[a.displayName, ...candidateAliases({ ...a, aliases: undefined } as never)]
                         .filter(Boolean)
                         .join(', ')}
                       value={a.aliases ?? ''}
                       onChange={(e) => updateAgent(a.id, { aliases: e.target.value })}
                     />
                     <p className="text-[10px] text-muted-foreground">
-                      Names that count as referring to this advocate in rebuttal checks. Default shown.
+                      Extra names that count as naming this advocate or their candidate (e.g. a full title). The advocate&rsquo;s name, candidate and surname always count.
                     </p>
                   </div>
                 </div>

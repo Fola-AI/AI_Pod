@@ -268,7 +268,38 @@ export async function executeTurn(
   // One turn attempt. In shared mode this runs the function-calling loop; in
   // native mode (or none) it's a single generate. Returns the result plus any
   // searches issued and whether a search failed.
+  // Timed, so optional retries can tell whether another call still fits.
   const call = async (
+    maxTokens: number,
+    userMessage: string,
+  ): Promise<{ result: GenerateResult; searches?: TurnSearch[]; degraded: boolean }> => {
+    const t0 = Date.now();
+    try {
+      return await callOnce(maxTokens, userMessage);
+    } finally {
+      longestCallMs = Math.max(longestCallMs, Date.now() - t0);
+    }
+  };
+  const turnStart = Date.now();
+  let longestCallMs = 0;
+  /**
+   * Optional retries (meta, truncation, Structured Rounds reminders) only run if
+   * another call as long as the slowest so far still fits the turn's time
+   * budget. A slow reasoning model (Grok 4.7: ~2.5 min per call) otherwise blew
+   * the route's 270s deadline on a reminder retry and the whole turn failed —
+   * when keeping the draft with its flag was always an acceptable outcome.
+   */
+  const canAffordRetry = (what: string): boolean => {
+    const used = Date.now() - turnStart;
+    const ok = used + longestCallMs * 1.1 < RETRY_TIME_BUDGET_MS;
+    if (!ok) {
+      console.log(
+        `[turn] ${plan.speakerDisplayName} (${model.displayName}): skipped ${what} retry — ${Math.round(used / 1000)}s used, slowest call ${Math.round(longestCallMs / 1000)}s`,
+      );
+    }
+    return ok;
+  };
+  const callOnce = async (
     maxTokens: number,
     userMessage: string,
   ): Promise<{ result: GenerateResult; searches?: TurnSearch[]; degraded: boolean }> => {
@@ -331,7 +362,7 @@ export async function executeTurn(
   // results show…", "now I'll compose my closing"). Retry with an explicit
   // speak-only instruction; accept after two tries (better than looping).
   if (!v.valid && v.reason === 'meta') {
-    for (let i = 0; i < 2 && !v.valid && v.reason === 'meta'; i++) {
+    for (let i = 0; i < 2 && !v.valid && v.reason === 'meta' && canAffordRetry('speak-only'); i++) {
       const speakOnly = `${baseUserMessage}\n\nSpeak only the words the audience hears. Do not narrate your own process, do not discuss which source or figure to use, and do not announce what you are about to say. Begin your spoken turn directly.`;
       ({ result, searches, degraded } = await call(baseMaxTokens, speakOnly));
       v = validateTurn(result.text, result.stopReason);
@@ -345,7 +376,7 @@ export async function executeTurn(
   let wasTruncated = false;
   if (!v.valid && v.reason === 'truncated') {
     const retryMessage = `${baseUserMessage}\n\nKeep this turn under ${slot ? plan.maxWords : calibratedWordBudget(plan.modelId, plan.maxWords)} words and finish your final sentence completely.`;
-    for (let i = 0; i < 2 && !v.valid && v.reason === 'truncated'; i++) {
+    for (let i = 0; i < 2 && !v.valid && v.reason === 'truncated' && canAffordRetry('truncation'); i++) {
       ({ result, searches, degraded } = await call(baseMaxTokens * 2, retryMessage));
       v = validateTurn(result.text, result.stopReason);
     }
@@ -407,6 +438,10 @@ export async function executeTurn(
     for (const c of checks) {
       const reminder = c.issue();
       if (!reminder) continue;
+      if (!canAffordRetry(c.flag)) {
+        validationFlags.push(c.flag); // keep the draft, flagged — never fail the turn
+        continue;
+      }
       const kept = { result, searches, degraded };
       ({ result, searches, degraded } = await call(baseMaxTokens, `${baseUserMessage}\n\n${reminder}`));
       if (!validateTurn(result.text, result.stopReason).valid) {
@@ -440,6 +475,8 @@ export function turnWordCount(t: { text: string }): number {
  * remains (caller then treats it as unusable rather than persisting a fragment).
  */
 const INTERJECTION_MAX_TOKENS = 1000;
+/** Optional in-turn retries must finish inside this (route soft deadline: 270s). */
+const RETRY_TIME_BUDGET_MS = 240_000;
 const INTERJECTION_MAX_WORDS = 30;
 
 /**

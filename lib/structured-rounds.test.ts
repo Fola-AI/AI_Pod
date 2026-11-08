@@ -12,7 +12,8 @@ import {
   moderatorSlotInstruction,
 } from './structured-rounds';
 import { planNextTurn } from './orchestrator';
-import type { AgentConfig, SessionConfig, Turn } from './types';
+import { executeTurn } from './execute-turn';
+import type { AgentConfig, GenerateResult, ProviderAdapter, SessionConfig, Turn } from './types';
 
 const ag = (id: string, name: string, candidate: string): AgentConfig => ({
   id,
@@ -191,6 +192,19 @@ describe('B8 validators', () => {
     expect(agentAliases(a)).toEqual(['Tony', 'Bola Tinubu', 'Tinubu']);
   });
 
+  it('configured aliases add to the defaults, never replace them (Nigeria SR regression)', () => {
+    const aisha = { ...lara, displayName: 'Aisha', candidate: 'Bola Ahmed Tinudu', aliases: ['President Bola Tinubu'] };
+    expect(agentAliases(aisha)).toEqual(
+      expect.arrayContaining(['Aisha', 'Bola Ahmed Tinudu', 'Tinudu', 'President Bola Tinubu', 'Tinubu']),
+    );
+    const cfg2 = { ...c, agents: [tony, aisha] };
+    // A rebuttal that says "Tinubu" (or "Aisha") names her — no false flag.
+    expect(rebuttalMissingRivals('Tinubu’s record on fuel subsidy is thin.', tony, cfg2)).toEqual([]);
+    expect(rebuttalMissingRivals('Aisha overstated the revenue.', tony, cfg2)).toEqual([]);
+    // Her own presentation saying "Tinubu" counts as naming her candidate.
+    expect(presentationMissingCandidate('Tinubu removed the subsidy.', aisha)).toBe(false);
+  });
+
   it('moderator: flags a question to an advocate, a wrong order, and a wrong intro', () => {
     const intro = c.structuredRounds!.plan![1]; // ROUND_INTRO r0, order Lara, Tony, Kimi, Ada
     expect(moderatorIssues('Round one: transport. Lara, Tony, Kimi, then Ada present.', intro, c)).toEqual([]);
@@ -228,5 +242,48 @@ describe('B7 moderator slot prompts — hand-offs and length', () => {
     const plan = c.structuredRounds!.plan!;
     expect(moderatorSlotInstruction(c, plan[0])).toMatch(/under 150 words/);
     expect(moderatorSlotInstruction(c, plan[plan.length - 1])).toMatch(/under 150 words/);
+  });
+});
+
+describe('time budget — slow models never blow the turn deadline on a reminder retry', () => {
+  afterEach(() => vi.restoreAllMocks());
+  const c = cfg();
+  const plan = c.structuredRounds!.plan!;
+  const firstRebuttal = plan.findIndex((s) => s.kind === 'REBUTTAL');
+  const delivered: Turn[] = plan.slice(0, firstRebuttal).map((slot, i) => ({
+    index: i, speakerId: slot.speakerId, speakerDisplayName: slot.speakerId, turnType: 'presentation',
+    turnClass: 'full', text: 'x', modelId: 'claude-haiku-4-5', inputTokens: 0, outputTokens: 0,
+    costUsd: 0, latencyMs: 0, wasEdited: false, isStale: false, wasTruncated: false, planSlot: i, createdAt: '',
+  }));
+  // A rebuttal that names only one rival → triggers the B8 reminder retry.
+  const incomplete = 'Tokyo is costly, and that matters for every rider on the network today.';
+  function adapter(callMs: number, calls: { n: number }): ProviderAdapter {
+    let now = 1_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    return {
+      id: 'anthropic',
+      async generate(): Promise<GenerateResult> {
+        calls.n++;
+        now += callMs; // each call "takes" callMs
+        return { text: incomplete, stopReason: 'complete', rawStopReason: 'end_turn', inputTokens: 1, outputTokens: 1, latencyMs: callMs };
+      },
+    };
+  }
+
+  it('fast model: the reminder retry runs (2 calls), then flags', async () => {
+    const calls = { n: 0 };
+    const p = planNextTurn(c, delivered)!;
+    const out = await executeTurn(c, delivered, p, adapter(5_000, calls));
+    expect(calls.n).toBe(2);
+    expect(out!.validationFlags).toContain('rebuttal_incomplete');
+  });
+
+  it('slow model (~155s/call, as Grok 4.7): skips the retry, keeps the draft flagged (1 call)', async () => {
+    const calls = { n: 0 };
+    const p = planNextTurn(c, delivered)!;
+    const out = await executeTurn(c, delivered, p, adapter(155_000, calls));
+    expect(calls.n).toBe(1);
+    expect(out!.text).toBe(incomplete);
+    expect(out!.validationFlags).toContain('rebuttal_incomplete');
   });
 });
